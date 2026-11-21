@@ -161,6 +161,7 @@ std::string trial_usage() {
          "  --pause-at=S           pauses on the first source image at S seconds or later, the same\n"
          "                         image from one run to the next (to compare two --snapshot runs)\n"
          "  --warp-l2              trial: TensorRT warp keeps the flow in persisting L2 (same output)\n"
+         "  --packed-warp          trial: reuse packed RGB sources for the cubic 4K RIFE warp on RTX 40\n"
          "  --no-rife-hwc8         trial: fused RIFE blocks built with planar inputs and outputs under\n"
          "                         TensorRT, with reformat copies (default: HWC8, same output)\n"
          "  --rife-warm            trial: calm pairs reuse the coarse RIFE blocks of the previous pair;\n"

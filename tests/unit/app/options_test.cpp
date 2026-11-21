@@ -196,6 +196,10 @@ TEST_CASE("kirari play : fichier et options", "[app][options]") {
   const auto warp_trials = parse({"épisode.mkv", "--warp-l2"});
   REQUIRE(warp_trials);
   CHECK(warp_trials->warp_l2);
+  CHECK_FALSE(options->packed_warp);
+  const auto packed = parse({"épisode.mkv", "--debug", "--packed-warp"});
+  REQUIRE(packed);
+  CHECK(packed->packed_warp);
   CHECK_FALSE(parse({"épisode.mkv", "--debug", "--tiled-warp"}));
   // Les blocs du RIFE fusionné en HWC8 : allumés par défaut, --no-rife-hwc8 les remet en plans.
   CHECK(options->rife_hwc8);

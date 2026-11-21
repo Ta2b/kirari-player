@@ -195,6 +195,21 @@ sept warps prennent 7,006 ms en médiane en plans et 4,719 ms avec les sources g
 les deux sources coûte 0,595 ms et laisse environ 0,211 ms par créneau du ×8. Le périmètre de ce
 banc exclut la composition et l'attente de présentation.
 
+Dans le lecteur CUDA, à ×8 avec SPAN Balanced 1080p vers 4K en plein écran, la médiane du
+warp passe de 1,35–1,36 à 1,11 ms. Son p95 passe de 1,96–2,03 à 1,53–1,77 ms. En comptant
+le rangement, le coût GPU moyen passe de 1,319–1,342 à 1,065–1,119 ms par warp. Wayland
+confirme 165,00–165,08 i/s au témoin et 164,53–165,00 i/s avec les sources groupées. Le
+lecteur compte une image manquée dans chaque passage groupé et aucune dans les témoins.
+
+L'option « Warp RIFE 4K compact (essai) » est décochée par défaut dans Interpolation >
+Avancé > Essais. `--debug --packed-warp` l'active pour une lecture de banc. Elle demande
+un warp cubique 3840×2160 sur Ada et une cadence de ×3 ou
+plus à l'ouverture. Le lecteur garde au plus deux sources rangées, soit 126,6 Mio. Une
+écriture ou libération invalide la source correspondante. Le warp planaire prend le relais
+sur une autre file, avec les calques fusionnés, le filtre matériel ou une allocation refusée.
+Le binaire recompilé a confirmé 165,00 i/s à ×8 avec et sans l'option, puis repris le warp
+compact après un saut en arrière. À ×2, il garde le chemin planaire.
+
 Le relevage CRD 4×4 de D2 et la projection finale à phases appariées réduisent les lectures
 et gardent les mêmes codes sur deux modèles et des recadrages. Leurs temps 1080p augmentent
 toutefois de quelques microsecondes au banc. L'écriture CRD directe garde la parité et gagne

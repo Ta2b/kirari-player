@@ -21,6 +21,7 @@ TEST_CASE("Les essais se relisent et se rechargent sans rendre les drapeaux de b
   CHECK(saved.experimental.gmfss_folded_tail);
   CHECK_FALSE(saved.experimental.gmflow_fast);
   CHECK_FALSE(saved.experimental.gmfss_direct_splats);
+  CHECK_FALSE(saved.experimental.packed_warp);
   CHECK_FALSE(saved.experimental.map_effects);
   CHECK_FALSE(saved.experimental.guided_glows);
   PlaySettings only_glow = saved;
@@ -31,12 +32,14 @@ TEST_CASE("Les essais se relisent et se rechargent sans rendre les drapeaux de b
   PlayOptions flags;
   flags.gmflow_fast = true;
   flags.gmfss_direct_splats = true;
+  flags.packed_warp = true;
   flags.nvof_layer_guard = true;
   flags.guided_glows = true;
   flags.effect_highlights = false;
   const auto started = settings_for(saved, flags);
   CHECK(started.experimental.gmflow_fast);
   CHECK(started.experimental.gmfss_direct_splats);
+  CHECK(started.experimental.packed_warp);
   CHECK(started.experimental.nvof_layer_guard);
   CHECK_FALSE(started.experimental.effect_glow);
   CHECK(started.experimental.guided_glows);

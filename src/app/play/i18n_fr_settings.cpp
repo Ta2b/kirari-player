@@ -197,6 +197,11 @@ constexpr std::array kSettingsPages{
           "uses TensorRT for that block.",
           "Essaie le dernier bloc Winograd CUDA après contrôle de la qualité et de la vitesse. "
           "Décocher utilise TensorRT pour ce bloc."},
+    Entry{"Packed 4K RIFE warp (test)", "Warp RIFE 4K compact (essai)"},
+    Entry{"Speeds up cubic 4K warping with RIFE at ×3 and above on RTX 40 GPUs. "
+          "Uses up to 127 MiB of extra video memory and keeps the same pixels.",
+          "Accélère le warp cubique 4K avec RIFE à partir de ×3 sur les RTX 40. "
+          "Utilise jusqu’à 127 Mio de mémoire vidéo supplémentaire et conserve les mêmes pixels."},
     Entry{"Fused warp and layers (test)", "Warp et calques fusionnés (essai)"},
     Entry{"Combines motion warping and layer composition on supported NVIDIA GPUs.",
           "Fusionne le warp de mouvement et la composition des calques sur les GPU NVIDIA compatibles."},

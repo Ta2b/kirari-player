@@ -57,6 +57,9 @@ struct WarpBlendParams {
 };
 
 cudaError_t launch_warp_blend(const WarpBlendParams& params, cudaStream_t stream);
+// Ces deux lanceurs partagent la même file. Le tampon intercalé est aligné sur 8 octets.
+cudaError_t launch_pack_warp_rgb(const void* src, void* dst, std::size_t pixels, cudaStream_t stream);
+cudaError_t launch_warp_blend_packed(const WarpBlendParams& params, cudaStream_t stream);
 
 struct LayerArgs;
 

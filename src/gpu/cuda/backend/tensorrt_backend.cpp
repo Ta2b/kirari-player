@@ -28,6 +28,7 @@
 #include "gpu/cuda/backend/tfix_fused_engine.h"
 #include "gpu/cuda/backend/trt_engine.h"
 #include "gpu/gmfss_trials.h"
+#include "gpu/rife_trials.h"
 #include "prepare/builder.h"
 #include "prepare/drba_split.h"
 #include "prepare/gmfss_fused.h"
@@ -152,6 +153,7 @@ std::expected<std::unique_ptr<TensorRtBackend>, Refusal> TensorRtBackend::create
   backend->log_ = init.log;
   backend->cache_dir_ = init.cache_dir;
   backend->filtered_warp_ = init.filtered_warp;
+  backend->packed_warp_ = (init.trials & kTrialPackedWarp) != 0;
   backend->l2_keep_ = (init.trials & kTrialL2Keep) != 0;
   backend->rife_hwc8_ = (init.trials & kTrialRifeHwc8) != 0;
   backend->warp_l2_ = (init.trials & kTrialWarpL2) != 0;
@@ -456,7 +458,9 @@ std::expected<std::unique_ptr<TensorBuffer>, Refusal> TensorRtBackend::alloc_ten
 
 void TensorRtBackend::free_after_lanes(void* memory) {
   if (memory == nullptr) return;
-  hazards_.forget(reinterpret_cast<std::uintptr_t>(memory));  // libérée derrière toutes les voies (A21-09)
+  const auto handle = reinterpret_cast<std::uintptr_t>(memory);
+  invalidate_warp_pack(std::span(&handle, 1));
+  hazards_.forget(handle);  // libérée derrière toutes les voies (A21-09)
   // Une allocation future à la même adresse n'hérite pas du drapeau compact de RIFE (B03-04).
   forget_rife_input(reinterpret_cast<std::uintptr_t>(memory));
   cudaStream_t free_on = stream_;

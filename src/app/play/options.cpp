@@ -148,7 +148,7 @@ constexpr std::string_view kTrialOptions[]{
     "--no-ring-watcher", "--precise-wait", "--no-precise-wait", "--audio-pll", "--no-audio-pll",
     "--vsync-index", "--no-vsync-index", "--present", "--no-present", "--no-vrr", "--rife-calm-model",
     "--rife-warm", "--profile-dispatches", "--rife-encode-all", "--rife-at-slot", "--span-b-ahead", "--filtered-warp",
-    "--warp-l2", "--rife-hwc8", "--no-rife-hwc8", "--no-tfix-cache", "--scene-map", "--no-tfix-fused",
+    "--warp-l2", "--packed-warp", "--rife-hwc8", "--no-rife-hwc8", "--no-tfix-cache", "--scene-map", "--no-tfix-fused",
     "--no-effect-highlights", "--shot-plan", "--no-span-reuse", "--no-span-tiles", "--rife-native",
     "--pair-triage", "--span-tiles-check", "--no-gmfss-native", "--no-span-native", "--span-native-edges",
     "--effect-mask-view", "--pause-at", "--span-tiles", "--tfix-native", "--no-scene-map",
@@ -208,6 +208,7 @@ constexpr Flag kFlags[]{
     {"--filtered-warp", &PlayOptions::filtered_warp, true},
     {"--l2-keep", &PlayOptions::l2_keep, true},
     {"--warp-l2", &PlayOptions::warp_l2, true},
+    {"--packed-warp", &PlayOptions::packed_warp, true},
     {"--rife-hwc8", &PlayOptions::rife_hwc8, true},
     {"--no-rife-hwc8", &PlayOptions::rife_hwc8, false},
     {"--span-native", &PlayOptions::span_native, true},  // le défaut, gardé pour les anciennes commandes

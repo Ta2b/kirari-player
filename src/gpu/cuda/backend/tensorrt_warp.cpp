@@ -20,6 +20,9 @@ namespace kirari::gpu::cuda {
 namespace {
 
 constexpr std::size_t kHistogramBytes = kernels::kFlowBins * sizeof(unsigned int);
+constexpr int kPackedWidth = 3840;
+constexpr int kPackedHeight = 2160;
+constexpr std::size_t kPackedPixels = std::size_t{kPackedWidth} * kPackedHeight;
 
 // --warp-l2 : la fenêtre d'accès persistante du flux sur le flot (bytes 0 : la retire), comme celle de
 // --l2-keep pour RIFE fusionné.
@@ -237,6 +240,73 @@ std::expected<void, Refusal> TensorRtBackend::certify_layered(const WarpBlendPar
   return {};
 }
 
+void TensorRtBackend::invalidate_warp_pack(std::span<const std::uintptr_t> writes) {
+  if (warp_rgb_memory_ == nullptr || writes.empty()) return;
+  for (auto& source : warp_rgb_sources_) {
+    if (source.handle != 0 && std::ranges::find(writes, source.handle) != writes.end()) source = {};
+  }
+}
+
+std::expected<bool, Refusal> TensorRtBackend::alloc_warp_pack() {
+  if (warp_rgb_memory_ != nullptr) return true;
+  const auto result = cudaMallocAsync(&warp_rgb_memory_, 2 * kPackedPixels * sizeof(uint2), stream_);
+  if (result == cudaErrorMemoryAllocation) {
+    const auto pending = clear_error();
+    if (pending != cudaSuccess) return std::unexpected(lost_refusal(pending, "warp RGBA : allocation"));
+    packed_warp_ = false;
+    return false;
+  }
+  if (auto ok = cuda_check(result, "warp RGBA : allocation"); !ok) return std::unexpected(ok.error());
+  warp_rgb_stream_ = stream_;
+  return true;
+}
+
+bool TensorRtBackend::can_pack_warp(const WarpBlendParams& p) const {
+  return packed_warp_ && p.cubic && !filtered_warp_ && properties_.major == 8 && properties_.minor == 9 &&
+         p.width == kPackedWidth && p.height == kPackedHeight;
+}
+
+std::expected<bool, Refusal> TensorRtBackend::pack_warp_sources(const Tensor& a, const Tensor& b,
+                                                                const Tensor* out, const LayerArgs* layers,
+                                                                WarpBlendParams& p) {
+  const bool aliases_output = out != nullptr && (out->handle == a.handle || out->handle == b.handle);
+  if (!can_pack_warp(p) || layers != nullptr || aliases_output) return false;
+  if (warp_rgb_stream_ != nullptr && warp_rgb_stream_ != stream_) return false;
+  auto ready = alloc_warp_pack();
+  if (!ready || !*ready) return ready;
+  const std::array sources{PackedWarpSource{a.handle, a.offset, a.shape},
+                           PackedWarpSource{b.handle, b.offset, b.shape}};
+  const std::array rgb{p.a, p.b};
+  std::array<std::size_t, 2> slots{};
+  for (std::size_t i = 0; i < slots.size(); ++i) {
+    const auto found = std::ranges::find(warp_rgb_sources_, sources[i]);
+    slots[i] = static_cast<std::size_t>(found - warp_rgb_sources_.begin());
+  }
+  if (slots[0] == 2) slots[0] = slots[1] == 0 ? 1 : 0;
+  if (slots[1] == 2) slots[1] = sources[0] == sources[1] ? slots[0] : 1 - slots[0];
+  const auto address = [this](std::size_t slot) {
+    return static_cast<uint2*>(warp_rgb_memory_) + slot * kPackedPixels;
+  };
+  if (warp_rgb_sources_[slots[0]] != sources[0] || warp_rgb_sources_[slots[1]] != sources[1]) {
+    GpuTiming& timing = stage("Rangement RVB du warp");
+    timing.begin(stream_);
+    cudaError_t result = cudaSuccess;
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+      auto& kept = warp_rgb_sources_[slots[i]];
+      if (kept == sources[i]) continue;
+      kept = {};
+      result = launch_pack_warp_rgb(rgb[i], address(slots[i]), kPackedPixels, stream_);
+      if (result != cudaSuccess) break;
+      kept = sources[i];
+    }
+    timing.end(stream_);
+    if (auto ok = cuda_check(result, "warp RGBA : rangement"); !ok) return std::unexpected(ok.error());
+  }
+  p.a = address(slots[0]);
+  p.b = address(slots[1]);
+  return true;
+}
+
 std::expected<void, Refusal> TensorRtBackend::warp(const Tensor& a, const Tensor& b, const Motion& motion,
                                                    const Poses& poses, float t, const Target& target,
                                                    const LayerArgs* layers) {
@@ -250,7 +320,7 @@ std::expected<void, Refusal> TensorRtBackend::warp(const Tensor& a, const Tensor
     return filtered_warp_ ? texture(tensor) : 0;
   };
   if (filtered_warp_) trim_textures();
-  const WarpBlendParams params{
+  WarpBlendParams params{
       .a = address(a),
       .b = address(b),
       .width = width_of(a),
@@ -283,6 +353,8 @@ std::expected<void, Refusal> TensorRtBackend::warp(const Tensor& a, const Tensor
   if (layers != nullptr) {
     if (auto ok = certify_layered(params, {a.handle, b.handle}, bounds); !ok) return ok;
   }
+  const auto packed = pack_warp_sources(a, b, out, layers, params);
+  if (!packed) return std::unexpected(packed.error());
   // --warp-l2 : le flot (le plus gros des tenseurs du mouvement) en L2 persistant le temps du warp. Le
   // mouvement du milieu sert à tous les instants d'une paire calme.
   const std::size_t window =
@@ -304,12 +376,13 @@ std::expected<void, Refusal> TensorRtBackend::warp(const Tensor& a, const Tensor
     return launch_into(target, "warp et mélange", [&](RingSurface surface) {
       WarpBlendParams into = params;
       into.surface = surface;
-      return launch_warp(into, motion.pan_lock && !poses.keep);
+      return launch_warp(into, motion.pan_lock && !poses.keep, *packed);
     });
   });
 }
 
-std::expected<void, Refusal> TensorRtBackend::launch_warp(const WarpBlendParams& base, bool pan) {
+std::expected<void, Refusal> TensorRtBackend::launch_warp(const WarpBlendParams& base, bool pan,
+                                                          bool packed) {
   WarpBlendParams params = base;
   if (pan) {  // une estimation par warp, relue par tous ses pixels
     if (pan_estimate_ == nullptr) {
@@ -324,6 +397,7 @@ std::expected<void, Refusal> TensorRtBackend::launch_warp(const WarpBlendParams&
       return ok;
     params.pan = pan_estimate_;
   }
+  if (packed) return cuda_check(launch_warp_blend_packed(params, stream_), "warp RGBA<<<>>>");
   return cuda_check(launch_warp_blend(params, stream_), "warp_blend<<<>>>");
 }
 

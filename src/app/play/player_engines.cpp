@@ -36,6 +36,7 @@
 #include "core/log.h"
 #include "core/utf8_path.h"
 #include "gpu/gmfss_trials.h"
+#include "gpu/rife_trials.h"
 #include "kernels/spec/distil_drba.h"
 #include "kernels/spec/rife.h"
 #include "prepare/cache.h"
@@ -532,8 +533,18 @@ PipelineConfig pipeline_config(Player& p, const PlaySettings& settings, const st
           .manual = p.manual_tracks != nullptr ? *p.manual_tracks : ManualTracks{}};
 }
 
+namespace {
+
+std::uint32_t warp_trials(const PlayOptions& options, const PlaySettings& settings, int order_factor) {
+  const bool packed_warp =
+      settings.experimental.packed_warp && settings.motion_engine == MotionEngine::Rife && order_factor >= 3;
+  return (options.warp_l2 ? gpu::kTrialWarpL2 : 0U) | (packed_warp ? gpu::kTrialPackedWarp : 0U);
+}
+
+}  // namespace
+
 // Ce que le backend de la chaîne reçoit du lecteur, options d'essai comprises (--profile-dispatches…).
-gpu::BackendInit chain_backend_init(Player& p, const PlaySettings& settings) {
+gpu::BackendInit chain_backend_init(Player& p, const PlaySettings& settings, int order_factor) {
   const ExperimentalSettings& trials = settings.experimental;
   const bool nvof_roundtrip = p.options.nvof_roundtrip || (settings.layers && trials.nvof_layer_guard);
   const bool glow = trials.glow_guidance() && p.options.scene_map && settings.rife_factor >= 2 &&
@@ -544,7 +555,7 @@ gpu::BackendInit chain_backend_init(Player& p, const PlaySettings& settings) {
           .profile_dispatches = p.options.profile_dispatches,
           .filtered_warp = p.options.filtered_warp,
           .trials = (p.options.l2_keep ? gpu::kTrialL2Keep : 0U) |
-                    (p.options.warp_l2 ? gpu::kTrialWarpL2 : 0U) |
+                    warp_trials(p.options, settings, order_factor) |
                     (p.options.rife_hwc8 ? gpu::kTrialRifeHwc8 : 0U) |
                     (p.options.span_native_edges ? gpu::kTrialSpanNative : 0U) |
                     (trials.span_fp8_native_blocks ? gpu::kTrialSpanFp8NativeBlocks : 0U) |

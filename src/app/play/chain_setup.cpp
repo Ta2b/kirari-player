@@ -715,7 +715,7 @@ Prepared prepare_chain_once(Player& p, const PlaySettings& settings) {
       !want_gmfss_only)
     return stage_refused(std::move(rife_found.error()), ChainStage::Motion);
   show_loading(p.screen, p.ui, i18n::ui_tr("Loading"));
-  const gpu::BackendInit init = chain_backend_init(p, settings);
+  const gpu::BackendInit init = chain_backend_init(p, settings, c.order_factor);
   // En cas de refus, le backend survit à ses moteurs dans p.spare_backend.
   const struct SpareBackend {
     Player& p;

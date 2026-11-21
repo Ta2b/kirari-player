@@ -358,7 +358,12 @@ class TensorRtBackend final : public Backend, public KernelOps {
                                                std::array<std::uintptr_t, 2> handles,
                                                LayerWarpBounds& bounds);
   // Le noyau du warp, précédé de l'estimation du mouvement d'ensemble quand pan (kernels/spec/warp_pan.h).
-  std::expected<void, Refusal> launch_warp(const WarpBlendParams& params, bool pan);
+  std::expected<void, Refusal> launch_warp(const WarpBlendParams& params, bool pan, bool packed);
+  std::expected<bool, Refusal> pack_warp_sources(const Tensor& a, const Tensor& b, const Tensor* out,
+                                                 const LayerArgs* layers, WarpBlendParams& params);
+  bool can_pack_warp(const WarpBlendParams& params) const;
+  std::expected<bool, Refusal> alloc_warp_pack();
+  void invalidate_warp_pack(std::span<const std::uintptr_t> writes);
   // launch(surface) chronométré sous name : surface nulle (object 0) vers un tenseur ; vers un slot,
   // l'attente de wait_value avant et le signal après, comme write_ring.
   template <typename Launch>
@@ -394,6 +399,17 @@ class TensorRtBackend final : public Backend, public KernelOps {
   std::filesystem::path cache_dir_;
   // BackendInit::filtered_warp (--filtered-warp, essai) : le warp lit par objets texture ; éteint, exact.
   bool filtered_warp_ = false;
+  bool packed_warp_ = false;
+  struct PackedWarpSource {
+    std::uintptr_t handle = 0;
+    std::uint64_t offset = 0;
+    Shape shape{};
+    bool operator==(const PackedWarpSource&) const = default;
+  };
+  // Une allocation double et une seule file, invalidée par toute écriture ou libération de la source.
+  void* warp_rgb_memory_ = nullptr;
+  cudaStream_t warp_rgb_stream_ = nullptr;
+  std::array<PackedWarpSource, 2> warp_rgb_sources_{};
   // kTrialL2Keep (--l2-keep, essai) : l'encodage gardé de RIFE fusionné tenu en L2.
   bool l2_keep_ = false;
   bool span_native_ = false;             // bords du SPAN FP8 par les noyaux du FP16 natif (kTrialSpanNative)

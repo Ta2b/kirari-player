@@ -103,6 +103,7 @@ void TensorRtBackend::destroy_lanes() {
     if (layer_proofs_[lane].flags != nullptr) cudaFree(layer_proofs_[lane].flags);
     layer_proofs_[lane] = {};
   }
+  if (warp_rgb_memory_ != nullptr) cuda_warn(cudaFree(warp_rgb_memory_), "libération des sources du warp");
   for (std::size_t lane = 0; lane < kLanes; ++lane) {
     for (cudaEvent_t event : lane_events_[lane]) {
       if (event != nullptr) cudaEventDestroy(event);
@@ -201,6 +202,7 @@ std::expected<void, Refusal> TensorRtBackend::order(std::initializer_list<std::u
 
 std::expected<void, Refusal> TensorRtBackend::order(std::span<const std::uintptr_t> reads,
                                                     std::span<const std::uintptr_t> writes) {
+  invalidate_warp_pack(writes);
   if (layer_certificates_ && !writes.empty()) {
     for (LayerProof& proof : layer_proofs_) {
       if (proof.handles[0] != 0 && (std::ranges::find(writes, proof.handles[0]) != writes.end() ||

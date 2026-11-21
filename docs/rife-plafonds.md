@@ -177,6 +177,10 @@ La borne prend le plus grand des deux temps estimés avec les octets mesurés. E
 porte sur le trafic de ces graphes et exclut la composition. Il faut mesurer les
 octets d'une variante fusionnée pour recalculer son propre plafond.
 
+Un graphe RIFE 4.25 avec un nouvel encodage, à la même taille, a lu et écrit 451,13 Mo
+en DDR et transféré 2 516,07 Mo au L2. Pour ce trafic, la borne est de 0,916 ms. La capture
+numéro 5 606 dure 2,149 ms. Les durées de ces captures uniques varient avec l'état de la carte.
+
 ### Gains à vérifier
 
 - Pour RIFE, le gain Tensor brut de Winograd 2D atteint 0,242 ms pour 4.25 et 0,254 ms pour Lite avec un

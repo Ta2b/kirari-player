@@ -185,6 +185,7 @@ struct PlayOptions {
   bool l2_keep = false;
   // --warp-l2 (essai) : le warp TensorRT tient le flot en L2 persistant (gpu::kTrialWarpL2) ; même image.
   bool warp_l2 = false;
+  bool packed_warp = false;  // --packed-warp : sources RVB groupées pour le warp cubique RIFE 4K
   // Les blocs du RIFE fusionné en E/S HWC8 sous TensorRT (gpu::kTrialRifeHwc8) : même image, −19 % par passe
   // RIFE mesuré dans le lecteur sur la RTX 4070 Ti (docs/interpolation.md) ; allumé par défaut,
   // --no-rife-hwc8 (essai) revient aux E/S en plans.

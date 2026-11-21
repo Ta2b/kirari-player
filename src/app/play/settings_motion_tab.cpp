@@ -640,6 +640,11 @@ void motion_advanced(PlaySettings& d, const SettingsChoices& choices, bool expor
                panel::Apply::Reload);
   }
   if (choices.tensor_cores && d.motion_engine == MotionEngine::Rife) {
+    ImGui::Checkbox(i18n::tr("Packed 4K RIFE warp (test)"), &d.experimental.packed_warp);
+    panel::tip(i18n::tr("Packed 4K RIFE warp (test)"),
+               i18n::tr("Speeds up cubic 4K warping with RIFE at ×3 and above on RTX 40 GPUs. "
+                        "Uses up to 127 MiB of extra video memory and keeps the same pixels."),
+               panel::Apply::Reload);
     ImGui::BeginDisabled(!d.layers);
     ImGui::Checkbox(i18n::tr("Fused warp and layers (test)"), &d.experimental.fused_layers);
     panel::tip(i18n::tr("Fused warp and layers (test)"),

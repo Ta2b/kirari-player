@@ -213,6 +213,7 @@ struct ExperimentalSettings {
   bool gmfss_folded_tail = true;
   bool gmflow_fast = false;
   bool gmfss_direct_splats = false;
+  bool packed_warp = false;
   bool fused_layers = false;
   bool nvof_layer_guard = false;
   bool span_fp8_native_blocks = false;

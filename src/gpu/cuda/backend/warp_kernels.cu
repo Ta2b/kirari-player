@@ -16,6 +16,51 @@
 namespace kirari::gpu::cuda {
 namespace {
 
+struct CatmullPacked {
+  __device__ static void sample_n(const Planes& t, int, float x, float y, float (&out)[3]) {
+    const auto f = CatmullRom::footprint(t, x, y);
+    const auto corner = static_cast<std::size_t>(t.oy) * t.plane_w + t.ox;
+    const auto* src = reinterpret_cast<const uint2*>(t.data) + corner;
+    float sum[3]{};
+    float lo[3]{3.0e38F, 3.0e38F, 3.0e38F};
+    float hi[3]{-3.0e38F, -3.0e38F, -3.0e38F};
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      float row[3]{};
+#pragma unroll
+      for (int i = 0; i < 4; ++i) {
+        const auto color = __ldg(src + f.rows[j] + f.cols[i]);
+        const float v[3]{
+            __half2float(__ushort_as_half(static_cast<unsigned short>(color.x))),
+            __half2float(__ushort_as_half(static_cast<unsigned short>(color.x >> 16))),
+            __half2float(__ushort_as_half(static_cast<unsigned short>(color.y))),
+        };
+#pragma unroll
+        for (int c = 0; c < 3; ++c) {
+          row[c] += v[c] * f.wx[i];
+          if ((i == 1 || i == 2) && (j == 1 || j == 2)) {
+            lo[c] = fminf(lo[c], v[c]);
+            hi[c] = fmaxf(hi[c], v[c]);
+          }
+        }
+      }
+#pragma unroll
+      for (int c = 0; c < 3; ++c) sum[c] += row[c] * f.wy[j];
+    }
+#pragma unroll
+    for (int c = 0; c < 3; ++c) out[c] = fminf(fmaxf(sum[c], lo[c]), hi[c]);
+  }
+};
+
+__global__ void pack_rgb(const __half* src, uint2* dst, std::size_t count) {
+  const std::size_t i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (i >= count) return;
+  const unsigned r = __half_as_ushort(src[i]);
+  const unsigned g = __half_as_ushort(src[i + count]);
+  const unsigned b = __half_as_ushort(src[i + 2 * count]);
+  dst[i] = uint2{r | (g << 16), b};
+}
+
 constexpr int kBlock = 16;
 
 dim3 grid_for(int width, int height) {
@@ -95,7 +140,7 @@ struct Shift {
 };
 
 // Les deux images lues au déplacement du pixel (x, y), mises à l'échelle de la sortie, puis mélangées.
-template <typename S, bool kCubic>
+template <typename S, bool kCubic, bool Packed = false>
 __device__ void blend_images(const WarpBlendParams& p, int x, int y, const Shift& m, float* rgb) {
   const float sx = static_cast<float>(p.width) / static_cast<float>(p.window_width);
   const float sy = static_cast<float>(p.height) / static_cast<float>(p.window_height);
@@ -103,7 +148,8 @@ __device__ void blend_images(const WarpBlendParams& p, int x, int y, const Shift
   const Planes b = image_planes(p, p.b, p.textures.b);
   const float fx = static_cast<float>(x);
   const float fy = static_cast<float>(y);
-  using Image = std::conditional_t<kCubic, CatmullRom, S>;
+  using Cubic = std::conditional_t<Packed, CatmullPacked, CatmullRom>;
+  using Image = std::conditional_t<kCubic, Cubic, S>;
   if constexpr (kCubic && std::is_same_v<S, Exact>) {
     float va[3];
     float vb[3];
@@ -151,7 +197,7 @@ __device__ float slow_fade(float d) {
 // Les trois canaux du pixel (x, y) de la sortie : mouvement lu dans la fenêtre, puis les deux
 // images déformées et mélangées. kCubic : les images lues par Catmull-Rom (option cubic, éteinte par
 // défaut), dans des noyaux à eux.
-template <typename S, bool kCubic>
+template <typename S, bool kCubic, bool Packed = false>
 __device__ void warp_pixel(const WarpBlendParams& p, int x, int y, float* rgb) {
   const Planes flow = motion_planes(p, p.flow, p.textures.flow);
   const Planes mask = motion_planes(p, p.mask, p.textures.mask);
@@ -214,7 +260,8 @@ __device__ void warp_pixel(const WarpBlendParams& p, int x, int y, float* rgb) {
     by = (1.0F - t) * ty;
     weight = 1.0F / (1.0F + expf(-z));
   }
-  blend_images<S, kCubic>(p, x, y, Shift{.ax = ax, .ay = ay, .bx = bx, .by = by, .weight = weight}, rgb);
+  blend_images<S, kCubic, Packed>(p, x, y, Shift{.ax = ax, .ay = ay, .bx = bx, .by = by, .weight = weight},
+                                  rgb);
 }
 
 // Le chemin à textures garde deux blocs par SM en Catmull-Rom. Le chemin exact lit les plans RVB
@@ -448,13 +495,13 @@ void launch_layers(dim3 grid, dim3 block, const WarpBlendParams& p, const LayerA
   }
 }
 
-template <bool kCubic>
+template <bool kCubic, bool Packed = false>
 __global__ void __launch_bounds__(kPixelThreads, kHeavyBlocksPerSm) warp_blend(WarpBlendParams p) {
   const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
   const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
   if (x >= p.width || y >= p.height) return;
   float rgb[3];
-  warp_pixel<Exact, kCubic>(p, x, y, rgb);
+  warp_pixel<Exact, kCubic, Packed>(p, x, y, rgb);
   if (p.surface.object != 0) {
     store_ring(p.surface, x, y, __float2half_rn(rgb[0]), __float2half_rn(rgb[1]), __float2half_rn(rgb[2]));
     return;
@@ -633,6 +680,18 @@ __global__ void __launch_bounds__(kPanThreads) pan_global(WarpBlendParams p, flo
 cudaError_t launch_pan_global(const WarpBlendParams& params, float* out, cudaStream_t stream) {
   if (params.width < 16 || params.height < 16) return cudaMemsetAsync(out, 0, 3 * sizeof(float), stream);
   pan_global<<<1, dim3(kBlock, kBlock), 0, stream>>>(params, out);
+  return cudaGetLastError();
+}
+
+cudaError_t launch_warp_blend_packed(const WarpBlendParams& p, cudaStream_t stream) {
+  warp_blend<true, true><<<grid_for(p.width, p.height), dim3(kBlock, kBlock), 0, stream>>>(p);
+  return cudaGetLastError();
+}
+
+cudaError_t launch_pack_warp_rgb(const void* src, void* dst, std::size_t pixels, cudaStream_t stream) {
+  const unsigned block = 256;
+  pack_rgb<<<(pixels + block - 1) / block, block, 0, stream>>>(static_cast<const __half*>(src),
+                                                               static_cast<uint2*>(dst), pixels);
   return cudaGetLastError();
 }
 
