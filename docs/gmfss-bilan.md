@@ -807,3 +807,12 @@ pour attribuer le résidu.
 Le banc isolé utilise une référence séquentielle pour les projections et inclut des
 transferts. Le passage au lecteur demande les projections parallèles existantes et
 une mesure Wayland avec composition.
+
+La capture des frontières du binaire direct confirme la provenance du pic.
+En donnant à GridNet les entrées FP16 capturées, ONNX Runtime reproduit
+exactement le canal vert au point (922, 534). Sur cette paire, garder les
+deux réductions et la normalisation du CNN de GMFlow en FP32 jusqu'à
+l'entrée du CNN fait passer le rendu de 52,15 à 52,60 dB face à la
+référence CPU. Le nombre de pixels à plus de 10 % d'écart passe de 42 à
+24, avec un écart maximal qui monte de 0,1592 à 0,1606. Le second plan
+reste autour de 74,14 dB. Cette variante reste au banc.
