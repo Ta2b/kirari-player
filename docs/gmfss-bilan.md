@@ -330,6 +330,13 @@ reprise tardive et 138 fusions. La fusion reste possible à la demande après un
 Le contrôle du binaire final avec l'option activée a évité 25 avances, repris une avance tardive et
 rendu 137 fusions.
 
+Dans un A/B/B/A Wayland sur une source 48 i/s interpolée à ×2, la garde avec prévision a éliminé
+29–36 reprises tardives et ramené le p95 des intervalles d'affichage de 66,7–71,5 à 54,6 ms. La
+cadence des images nouvelles est passée de 28,8–29,8 à 27,7–28,3 i/s. Le résultat dépend de la
+marge retenue et de la cadence de la source. À 24 i/s, les passages avec une période de marge
+donnent 24,3–25,6 nouvelles images/s contre 25,4–25,5 pour le témoin. La garde avec prévision reste
+réservée au banc.
+
 Une ablation sur la paire réelle à 960,40 s remplace tour à tour les sorties CUDA intermédiaires par celles
 de l'ONNX. Témoin à 34,84 dB en fusion. Remplacer le CNN donne 43,54 dB, remplacer la propagation au huitième
 47,25 dB, les deux ensemble 55,07 dB. Rétablir les frontières FP16 de l'attention et du MLP attestées par
