@@ -5,6 +5,28 @@ vertical. Le réglage « Dernier bloc DistilDRBA natif (essai) » sous Interpola
 est coché par défaut. Le décocher garde les trois blocs sous TensorRT. Même avec le réglage coché, le chargement
 garde TensorRT pour le dernier bloc lorsque les contrôles de rendu, de réemploi ou de durée échouent.
 Les premiers blocs et l'encodeur du lecteur utilisent toujours TensorRT. Le bloc 1 CUDA reste au banc.
+
+Pour le bloc 0, un banc de convolution directe charge le halo de ses 192
+canaux une fois par bloc CUDA. Sur quatre entrées réelles, les huit états
+résiduels et la projection restent identiques à la référence directe à
+sommes FP32. Le meilleur réglage fait passer les huit résidus de 181,38 à
+134,88 µs sur RTX 4070 Ti. Le bloc CUDA mesuré de bout en bout reste autour
+de 190 µs, contre 81,87 µs pour le bloc TensorRT. La voie directe reste au
+banc en attendant une réduction du coût de ce bloc.
+
+Le banc Winograd F(2 × 2, 3 × 3) des mêmes résidus passe de 157,84 à
+74,97 µs, à sommes FP32 sur des transformées rangées en FP16. Le bloc
+entier atteint 119,26 µs dans cet essai, contre 81,59 µs pour TensorRT.
+Sur les quatre captures, le bloc Winograd donne 63,31–65,53 dB face à la
+référence ONNX CPU. La compensation des poids transformés donne
+64,01–66,04 dB et porte les résidus à 124,39 µs. Le rendu de la chaîne
+reste à vérifier avant toute activation.
+
+La fusion du rangement de l'encodeur et de sa sortie après warp a donné
+24,05 à 13,01 µs au banc isolé, avec 24 675 840 valeurs identiques sur trois
+résolutions. La lecture appariée à ×2 avec SPAN Performance donne environ
+48 nouvelles images/s sous Wayland aux deux réglages. Les mesures GPU du
+moteur complet se recouvrent. Cette fusion reste au banc.
 Les mesures et le détail des contrôles sont dans [la fiche de la chaîne fusionnée](drba-fusionne.md).
 
 Un prototype de l'encodeur réutilise les convolutions RIFE à sommes FP32 puis range les

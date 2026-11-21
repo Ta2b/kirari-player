@@ -816,3 +816,36 @@ l'entrée du CNN fait passer le rendu de 52,15 à 52,60 dB face à la
 référence CPU. Le nombre de pixels à plus de 10 % d'écart passe de 42 à
 24, avec un écart maximal qui monte de 0,1592 à 0,1606. Le second plan
 reste autour de 74,14 dB. Cette variante reste au banc.
+
+### Lecture Wayland et géométries GridNet fixes
+
+Le prototype de lecteur a chargé la paire et la fusion directement depuis les
+poids. Sur le passage en fenêtre de 1 600 × 900, le journal confirme les splats
+groupés, 68 paires et 68 fusions, sans passe ni repli RIFE. Le chargement des
+deux objets CUDA prend environ 0,63 s après préparation. Le témoin historique
+réutilise quatre plans TensorRT et effectue ses contrôles au chargement. Il
+garde notamment GMFlow sous TensorRT et emploie GridNet avec des sommes FP16
+sur une partie de la chaîne. Les recettes diffèrent donc par leur précision,
+leurs noyaux et leur mode de chargement.
+
+| Voie à 1920 × 1152 remplies | Fusion GPU médiane | Nouvelles images confirmées sur le passage | Cadence Wayland |
+| --- | ---: | ---: | ---: |
+| Lecteur actuel, avec splats directs | 17,28 ms | 181 | 36,42 i/s |
+| Prototype CUDA direct, GridNet CT16 | 48,29 ms | 109 | 22,18 i/s |
+| Prototype CUDA direct, GridNet CT32 | 32,05 ms | 144 | 29,12 i/s |
+
+La variante CT32 regroupe 32 canaux de sortie au lieu de 16 pour 44 des 45
+convolutions de GridNet. Elle garde les sommes FP32 et le découpage de K.
+Le rejeu de GridNet seul, avec les mêmes activations d'entrée, retrouve les
+26 542 080 valeurs bit à bit sur deux scènes, aux formats NHWC et C8. Le
+rejeu de la chaîne complète à 960,40 s donne 89,59 dB entre les deux sorties.
+Ce rejeu inclut les additions atomiques du splat et ne fixe pas leur ordre.
+Le gain d'environ 16 ms concerne la fusion CUDA directe. La chaîne complète
+reste en prototype, avec une cadence inférieure au témoin sur ce passage.
+
+Passer de CT32 à CT64 sur 31 couches sélectionnées garde les mêmes codes
+dans les deux dispositions sur les deux scènes. Dans un autre passage
+apparié, la fusion passe de 32,07 à 28,61 ms. Le lecteur traite 119 paires
+et 82 fusions contre 107 et 78 au témoin, mais la cadence confirmée passe
+de 32,17 à 29,74 i/s. Ces deux passages en régime saturé ne démontrent
+pas un gain de cadence. La sélection reste au banc.

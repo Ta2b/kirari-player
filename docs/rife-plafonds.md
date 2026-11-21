@@ -241,9 +241,12 @@ La tête partagée de RIFE 4.22 Lite CUDA direct à 1920 × 1088 retire un quart
 des produits de sa convolution transposée. Les huit canaux supprimés par
 phase représentent 1,070 GFLOP par interpolation sur la grille 480 × 272.
 La colle D2 conserve les produits Tensor et partage les lectures et calculs
-de ses prises bilinéaires. Le rapport de 48,6 % ci-dessus reste celui de la
-capture antérieure. Un nouveau profil de graphe est nécessaire pour comparer
-son trafic et sa durée au travail réduit.
+de ses prises bilinéaires. Sur le même dixième rejeu avec nouvel encodage,
+la trace confirme 50 nœuds en 2,529 ms. La colle D2 passe de 241 à 209 µs
+et la tête de 98 à 88 µs. Le relevé séparé compte environ 436,00 Mo en
+DDR et 2 311,39 Mo en L2. La borne Tensor, recalculée à 107,21 GFLOP au
+même débit, vaut 1,236 ms, soit 48,9 % de la durée du graphe. Le rapport
+reste limité au travail du moteur dans cette recette.
 
 ### Gains à vérifier
 

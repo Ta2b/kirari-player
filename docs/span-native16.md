@@ -657,6 +657,21 @@ des passages alternés. Les témoins présentent 60,6–60,9 nouvelles images/s
 et les candidats 61,1–61,3. La cadence varie trop peu pour isoler un gain
 du lecteur. Avec le warp après SPAN, les écritures restent ordinaires.
 
+Le prototype qui conserve l'identité de la source dans ce cache a fait
+passer les sources calculées par tuiles d'environ 32 % à 65 %. Sur la même
+configuration Balanced avec les confirmations Wayland, la cadence passe de
+61,13–61,19 à 62,44–62,99 nouvelles images/s. Le repli tensoriel forcé
+annule les 80 plans devenus périmés. Le contrôle contre un calcul dense
+donne un pire bloc de 1,24 niveau et un écart moyen maximal de 0,074 niveau,
+contre 1,16 et 0,046 au témoin. Ce gain fait davantage appel à la reprise
+approximative des tuiles et reste au banc.
+
+Un autre essai aligne le front dense sur les blocs CUDA. En bandes de
+128 lignes, le nombre de tuiles calculées par les ReLU et les portes baisse
+de 1,46 % en Équilibre et de 0,55 % en Qualité. Les 24 883 200 codes de
+sortie restent identiques dans les deux précisions, en bandes de 128 et
+127 lignes. Les chronos appariés restent dans le bruit des passages.
+
 ## Mesurer
 
 Le PC ne mesure que les temps ; la justesse se juge sur processeur, dans le cloud. Un seul banc, sur CachyOS,
