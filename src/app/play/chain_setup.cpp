@@ -447,9 +447,9 @@ std::expected<bool, StageFailure> prepare_manual_fp8(Player& p, const gpu::Backe
 // Le SPAN natif (docs/span-native16.md), par défaut sur un moteur qui a ses noyaux, aux SPAN d'AnimeJaNai. Il
 // ne quantifie rien : une source HDR ne l'exclut pas.
 bool native_span(const Player& p, const gpu::BackendCaps& caps, const ModelChoice& model) {
-  const bool native = cuda_inference_mode(p.engines) != gpu::kTensorRtInference && p.options.span_native &&
-                      caps.span_fp16_cutlass && span_fp8_cutlass_model(model.path);
-  if (p.options.span_native && !native)
+  const bool enabled = p.options.span_native && cuda_inference_mode(p.engines) != gpu::kTensorRtInference;
+  const bool native = enabled && caps.span_fp16_cutlass && span_fp8_cutlass_model(model.path);
+  if (enabled && !native && gpu::is_cuda_backend(caps.name))
     log_channel("app")->info("SPAN natif : pas sur ce moteur, cette carte ou ce modèle, TensorRT FP16");
   return native;
 }
