@@ -641,6 +641,22 @@ Winograd vertical existant. Il ne retient ensuite l'écriture directe que si les
 bandes d'essai rendent les mêmes codes FP16 et si son temps médian baisse d'au moins 2 %.
 Le lecteur recompilé a retenu cette écriture à 3,49 ms contre 3,60 ms dans l'essai de chargement.
 
+### Sortie des images interpolées avant SPAN
+
+Avec le warp avant SPAN, la sortie tensorielle de SPAN n'est réutilisée que
+pour les images source. Le chemin CUDA FP16 écrit directement dans l'anneau
+pour les intermédiaires et évite une écriture de 49,8 Mo par trame 4K.
+Les images source gardent leur cache pour les poses et les tuiles. Avec
+les anciens modules CUDA, le lecteur reprend la sortie tensorielle normale.
+Les 12 comparaisons du contenu de l'anneau, dont RGBA16 et RGB10A2 en 4K,
+donnent les mêmes codes avec et sans cette écriture.
+
+Sur la RTX 4070 Ti, avec Balanced FP16 et RIFE 4.22 Lite ×8 en fenêtre
+Wayland RGBA16, la queue CUDA passe de 0,525 à 0,445 ms en moyenne dans
+des passages alternés. Les témoins présentent 60,6–60,9 nouvelles images/s
+et les candidats 61,1–61,3. La cadence varie trop peu pour isoler un gain
+du lecteur. Avec le warp après SPAN, les écritures restent ordinaires.
+
 ## Mesurer
 
 Le PC ne mesure que les temps ; la justesse se juge sur processeur, dans le cloud. Un seul banc, sur CachyOS,

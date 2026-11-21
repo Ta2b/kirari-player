@@ -645,13 +645,13 @@ std::expected<void, Refusal> SpanFp8Engine::enqueue_body(cudaStream_t stream,
                                                          std::span<const Tensor> outputs, bool ring) {
   end_tiles();  // un appel d'avant arrêté entre le corps et la queue ne laisse pas ses masques
   if (ring) tile_job_.reset();
-  if (inputs.size() != 1 || outputs.size() != 1)
+  const bool surface_only = ring && outputs.empty() && fp16();
+  if (inputs.size() != 1 || (!surface_only && outputs.size() != 1))
     return refuse(RefusalCode::ShapeInvalid, "SPAN FP8 : une entrée et une sortie attendues");
   const Tensor& in = inputs[0];
-  const Tensor& out = outputs[0];
   if (in.type != TensorType::F16 || !(in.shape == input_))
     return refuse(RefusalCode::ShapeInvalid, "SPAN FP8 : entrée de forme ou de type différents du moteur");
-  if (out.type != TensorType::F16 || !(out.shape == output_))
+  if (!surface_only && (outputs[0].type != TensorType::F16 || !(outputs[0].shape == output_)))
     return refuse(RefusalCode::ShapeInvalid, "SPAN FP8 : sortie de forme ou de type différents du moteur");
   if (!arena) return refuse(RefusalCode::GraphInvalid, "SPAN FP8 : zone d'activation absente");
   if (auto ok = use_zone(arena); !ok) return ok;
@@ -659,7 +659,8 @@ std::expected<void, Refusal> SpanFp8Engine::enqueue_body(cudaStream_t stream,
   // NOLINTBEGIN(performance-no-int-to-ptr) : un tenseur porte son adresse CUDA en entier
   const void* source = reinterpret_cast<const void*>(in.handle + in.offset);
   // NOLINTEND(performance-no-int-to-ptr)
-  auto tiled = start_tiles(stream, out.handle + out.offset);
+  auto tiled = surface_only ? std::expected<bool, Refusal>{false}
+                            : start_tiles(stream, outputs[0].handle + outputs[0].offset);
   if (!tiled) return std::unexpected(std::move(tiled.error()));
   // Le contenu du masque vient d'être enfilé sur stream, avant le corps. Le graphe masqué
   // pointe toujours vers le même masque d'appareil et lit son nouveau contenu à chaque rejeu.
@@ -670,10 +671,10 @@ std::expected<void, Refusal> SpanFp8Engine::enqueue_body(cudaStream_t stream,
 
 std::expected<void, Refusal> SpanFp8Engine::enqueue_tail(cudaStream_t stream, std::span<const Tensor> outputs,
                                                          const SpanFp8Ring& ring) {
-  if (outputs.size() != 1) return refuse(RefusalCode::ShapeInvalid, "SPAN FP8 : une sortie attendue");
-  const Tensor& out = outputs[0];
+  if (outputs.size() != 1 && !(outputs.empty() && fp16() && ring.surface.object != 0))
+    return refuse(RefusalCode::ShapeInvalid, "SPAN FP8 : une sortie attendue");
   // NOLINTNEXTLINE(performance-no-int-to-ptr) : un tenseur porte son adresse CUDA en entier
-  void* target = reinterpret_cast<void*>(out.handle + out.offset);
+  void* target = outputs.empty() ? nullptr : reinterpret_cast<void*>(outputs[0].handle + outputs[0].offset);
   std::string why;
   const bool launched = net_->launch_tail(stream, target, ring, why);
   end_tiles();

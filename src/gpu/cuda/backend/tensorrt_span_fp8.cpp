@@ -91,6 +91,14 @@ std::expected<void, Refusal> TensorRtBackend::enqueue_ring(Engine& engine, std::
                                                            std::span<Tensor> outputs,
                                                            const RingTarget& target) {
   auto* fused = dynamic_cast<SpanFp8Engine*>(&engine);
+  // L'appelant peut omettre le tenseur s'il ne consomme que la surface FP16 native.
+  if (outputs.empty()) {
+    if (fused == nullptr || !fused->fp16() || target.slot == nullptr ||
+        fused->output_shape().dims[2] != target.slot->height ||
+        fused->output_shape().dims[3] != target.slot->width)
+      return refuse(RefusalCode::FormatUnsupported, "SPAN : écriture d'anneau sans cache indisponible");
+    return enqueue_span_fp8(*fused, inputs, outputs, &target);
+  }
   // La sortie doit avoir la taille de l'emplacement (write_ring le refuserait sinon) : le chemin commun dit
   // alors pourquoi.
   const bool direct = fused != nullptr && target.slot != nullptr && outputs.size() == 1 &&

@@ -425,7 +425,8 @@ std::expected<void, Refusal> UpscaleStage::finish(const gpu::Tensor& rgb, std::u
   // Tuiles qui bougent : la source de l'image seulement (output_ tient celle d'avant), par enqueue (la queue
   // n'écrit que les tuiles calculées : l'emplacement reçoit ensuite output_ entière).
   const gpu::Tensor& now = rgb_[current_]->tensor();
-  if (rgb.handle == now.handle && rgb.offset == now.offset && send_tiles(reuse_, *setup_.engine, nullptr)) {
+  const bool source = rgb.handle == now.handle && rgb.offset == now.offset;
+  if (source && send_tiles(reuse_, *setup_.engine, nullptr)) {
     auto ok = setup_.backend->enqueue(*setup_.engine, inputs, outputs);
     if (!ok) drop_tiles(*setup_.engine);
     if (ok) ok = check_tiles(reuse_, *setup_.backend, *setup_.engine, inputs, outputs[0]);
@@ -433,12 +434,18 @@ std::expected<void, Refusal> UpscaleStage::finish(const gpu::Tensor& rgb, std::u
     return write_slot(output_->tensor(), slot, sync);
   }
   // Sans export YUV : SPAN et l'écriture de l'emplacement en un appel (étape 3.4b), que le backend sait
-  // fondre (le SPAN FP8 écrit l'anneau depuis son épilogue) ; la sortie est écrite aussi (reuse_span_).
+  // fondre. Seules les images source gardent un cache tensoriel à réutiliser.
   if (!setup_.yuv_slots) {
-    return blame_stage(
-        setup_.backend->enqueue_ring(*setup_.engine, inputs, outputs,
-                                     gpu::RingTarget{.slot = &setup_.slots[slot], .sync = sync}),
-        kSpanRefusalKey);
+    const gpu::RingTarget target{.slot = &setup_.slots[slot], .sync = sync};
+    if (!source && setup_.backend->capabilities().ring_targets && setup_.engine->span_tile_grid().usable()) {
+      auto only = setup_.backend->enqueue_ring(*setup_.engine, inputs, {}, target);
+      // Les anciens modules rejettent la liste vide avec InputMismatch, avant tout enfilage.
+      if (only || (only.error().code != RefusalCode::FormatUnsupported &&
+                   only.error().code != RefusalCode::InputMismatch))
+        return blame_stage(std::move(only), kSpanRefusalKey);
+    }
+    return blame_stage(setup_.backend->enqueue_ring(*setup_.engine, inputs, outputs, target),
+                       kSpanRefusalKey);
   }
   if (auto ok = setup_.backend->enqueue(*setup_.engine, inputs, outputs); !ok)
     return blame_stage(std::move(ok), kSpanRefusalKey);
