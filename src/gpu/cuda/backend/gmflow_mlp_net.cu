@@ -134,7 +134,7 @@ cudaError_t prepare_kernel() {
 }
 
 struct Layer {
-  Buffer w, gamma, beta;
+  Buffer w, strict, gamma, beta;
   float eps = 1e-5F;
 };
 
@@ -182,8 +182,8 @@ class Net final : public GmflowMlpNet {
     p.splits = fast ? 1 : splits_for(blocks);
     p.partial = p.splits > 1 ? partial_.as<float>() : nullptr;
     const bool compact_strict =
-        compact_strict_ && layer == kLastFastScaleLayer && tokens == max_tokens_ && p.splits == 1;
-    p.w = (compact_strict ? strict_weights_ : l.w).as<const uint4>();
+        l.strict.as<const uint4>() != nullptr && tokens == max_tokens_ && p.splits == 1;
+    p.w = (compact_strict ? l.strict : l.w).as<const uint4>();
     p.gamma = l.gamma.as<const float>();
     p.beta = l.beta.as<const float>();
     p.eps = l.eps;
@@ -260,7 +260,9 @@ class Net final : public GmflowMlpNet {
   }
 
   bool prepare_compact_strict(const GmflowMlp& mlp, std::string& error) {
-    if (!compact_shape() || mlp.layers.size() != kLastFastScaleLayer + 1) return true;
+    const bool strict_quarter =
+        !fast_ && paired_ && sms_ == 60 && hidden_ == gm::kCompactHidden && max_tokens_ == 4 * 72 * 120;
+    if ((!compact_shape() && !strict_quarter) || mlp.layers.size() != kLastFastScaleLayer + 1) return true;
     const char* const enabled = std::getenv("KIRARI_AB_GMFLOW_MLP_STRICT64");  // env: banc
     if (enabled != nullptr && std::strcmp(enabled, "0") == 0) return true;
     const auto configured =
@@ -271,15 +273,18 @@ class Net final : public GmflowMlpNet {
       return true;
     }
     if (!sent(configured, error)) return false;
-    // Le pack apparié reste disponible pour les appels à moins de jetons et le repli.
-    const auto packed = stages(mlp.layers[kLastFastScaleLayer], hidden_, false);
-    const auto uploaded = strict_weights_.upload(packed.data(), packed.size() * sizeof(uint4));
-    if (uploaded == cudaErrorMemoryAllocation) {
-      static_cast<void>(cudaGetLastError());
-      return true;
+    // Le pack apparié reste disponible pour les appels partiels et le repli.
+    // Le mode rapide garde seulement le dernier bloc en sommes FP32.
+    for (std::size_t i = fast_ ? kLastFastScaleLayer : 0; i < layers_.size(); ++i) {
+      const auto packed = stages(mlp.layers[i], hidden_, false);
+      const auto uploaded = layers_[i].strict.upload(packed.data(), packed.size() * sizeof(uint4));
+      if (uploaded == cudaErrorMemoryAllocation) {
+        static_cast<void>(cudaGetLastError());
+        return true;
+      }
+      if (!sent(uploaded, error)) return false;
     }
-    compact_strict_ = sent(uploaded, error);
-    return compact_strict_;
+    return true;
   }
 
   bool upload_layers(const GmflowMlp& mlp, std::string& error) {
@@ -342,8 +347,6 @@ class Net final : public GmflowMlpNet {
   bool fast_ = false;
   bool compact_requested_ = false;
   bool compact_fast_ = false;
-  bool compact_strict_ = false;
-  Buffer strict_weights_;
   std::vector<Layer> layers_;
   std::int64_t partial_floats_ = 0;
   Buffer partial_;

@@ -12,6 +12,29 @@ Le noyau qui ajoute les positions au huitième lit directement les centres pairs
 retire un lancement et le trafic intermédiaire. Le banc isolé à 36×60 jetons passe de 5,7 à 3,2 µs,
 avec des résultats identiques au bit près sur quatre grilles dans les deux ordres physiques.
 
+### MLP strict au quart sur Ada 60 SM
+
+En travail 1080p au demi-flot, les six MLP FP32 du quart réutilisent la tuile
+compacte. Le calcul garde l'ordre des produits et les frontières FP16. La
+mémoire partagée passe de 50 176 à 32 768 octets par bloc, ce qui permet
+trois blocs résidents par SM. Les poids rangés pour le chemin apparié et les
+formes partielles restent disponibles. Le rangement compact ajoute 4,5 Mio.
+
+Les neuf sorties des trois triplets et leurs états de réemploi et de changement
+de voie donnent 209 433 600 codes FP16 identiques. À borne modélisée égale
+avec Winograd et fusion, les médianes de GMFlow isolé donnent les résultats
+suivants.
+
+| État | GPU avant → après | Borne | Part avant → après |
+| --- | ---: | ---: | ---: |
+| Recalcul | 7,314 → 7,081 ms | 5,29 ms | 72,33 % → 74,71 % |
+| Réemploi de A | 6,728 → 6,670 ms | 4,95 ms | 73,57 % → 74,22 % |
+
+Un triplet avec réemploi passe de 6,715 à 6,841 ms. En GMFSS seul dans le
+lecteur, deux passages Wayland par variante donnent 24,94–27,50 puis
+27,22–28,06 nouvelles images/s. La dispersion des passages limite
+l'interprétation de ce gain de cadence.
+
 Le contrôle au chargement garde le flot TensorRT FP16 avec 39,3 dB sur `motion1_1` pour 45 dB requis.
 Sur une vraie paire à fort mouvement, le même suffixe MetricNet/GridNet rend environ 50 dB dans la
 comparaison avec TensorRT. Les écarts les plus visibles restent sur le contour en mouvement. Le banc
