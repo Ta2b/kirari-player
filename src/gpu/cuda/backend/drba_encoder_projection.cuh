@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "gpu/cuda/backend/rife_native_kernels.cuh"
 
 namespace kirari::gpu::cuda::drba_encoder_projection {
@@ -18,31 +20,32 @@ inline constexpr int kTileHeight = 4;
 inline constexpr int kThreads = 128;
 static_assert(kWidth % kTileWidth == 0 && kHeight % kTileHeight == 0);
 
-__device__ __forceinline__ ushort average(ushort a, ushort b, ushort c, ushort d) {
+__device__ __forceinline__ std::uint16_t average(std::uint16_t a, std::uint16_t b, std::uint16_t c,
+                                                 std::uint16_t d) {
   // Même ordre de lecture et d'addition que post_planes : haut-gauche, haut-droite, bas-gauche, bas-droite.
   const float sum = __half2float(__ushort_as_half(a)) + __half2float(__ushort_as_half(b)) +
                     __half2float(__ushort_as_half(c)) + __half2float(__ushort_as_half(d));
   return __half_as_ushort(__float2half_rn(sum * 0.25F));
 }
 
-__device__ __forceinline__ uint pack(ushort lo, ushort hi) {
-  return static_cast<uint>(lo) | (static_cast<uint>(hi) << 16);
+__device__ __forceinline__ std::uint32_t pack(std::uint16_t lo, std::uint16_t hi) {
+  return static_cast<std::uint32_t>(lo) | (static_cast<std::uint32_t>(hi) << 16);
 }
 
-__device__ __forceinline__ ushort bottom(uint packed) {
-  return static_cast<ushort>(packed);
+__device__ __forceinline__ std::uint16_t bottom(std::uint32_t packed) {
+  return static_cast<std::uint16_t>(packed);
 }
 
-__device__ __forceinline__ ushort top(uint packed) {
-  return static_cast<ushort>(packed >> 16);
+__device__ __forceinline__ std::uint16_t top(std::uint32_t packed) {
+  return static_cast<std::uint16_t>(packed >> 16);
 }
 
-__device__ __forceinline__ uint2 planar_row(const uint* row, int stride, int shift) {
+__device__ __forceinline__ uint2 planar_row(const std::uint32_t* row, int stride, int shift) {
   return make_uint2(pack(bottom(row[0] >> shift), bottom(row[stride] >> shift)),
                     pack(bottom(row[2 * stride] >> shift), bottom(row[3 * stride] >> shift)));
 }
 
-__device__ __forceinline__ uint half_row(uint2 upper, uint2 lower) {
+__device__ __forceinline__ std::uint32_t half_row(uint2 upper, uint2 lower) {
   return pack(average(bottom(upper.x), top(upper.x), bottom(lower.x), top(lower.x)),
               average(bottom(upper.y), top(upper.y), bottom(lower.y), top(lower.y)));
 }
@@ -102,8 +105,8 @@ __device__ __forceinline__ void publish(const Sum (&sum)[4][2], const float* bia
   }
 }
 
-__device__ __forceinline__ void arrange(const uint* tile, ushort* full, ushort* half, ushort* quarter, int ox,
-                                        int oy, int batch, int thread) {
+__device__ __forceinline__ void arrange(const std::uint32_t* tile, std::uint16_t* full, std::uint16_t* half,
+                                        std::uint16_t* quarter, int ox, int oy, int batch, int thread) {
   constexpr int groups = kTileWidth / 4, stride = kOutputPitch / 2;
   const int col = (thread % groups) * 4;
   const int channel = thread / groups, shift = (channel % 2) * 16;
@@ -121,8 +124,8 @@ __device__ __forceinline__ void arrange(const uint* tile, ushort* full, ushort* 
     all[dr::kWidth / 4] = row1;
     all[2 * dr::kWidth / 4] = row2;
     all[3 * dr::kWidth / 4] = row3;
-    auto* small =
-        reinterpret_cast<uint*>(half + plane * (dr::kPixels / 4) + (y / 2) * (dr::kWidth / 2) + x / 2);
+    auto* small = reinterpret_cast<std::uint32_t*>(half + plane * (dr::kPixels / 4) +
+                                                   (y / 2) * (dr::kWidth / 2) + x / 2);
     small[0] = dr::half_row(row0, row1);
     small[dr::kWidth / 4] = dr::half_row(row2, row3);
     quarter[plane * (dr::kPixels / 16) + (y / 4) * (dr::kWidth / 4) + x / 4] =
@@ -131,7 +134,7 @@ __device__ __forceinline__ void arrange(const uint* tile, ushort* full, ushort* 
 }
 
 __global__ void __launch_bounds__(rn::kThreads, 3)
-    project(rn::Params p, ushort* full, ushort* half, ushort* quarter) {
+    project(rn::Params p, std::uint16_t* full, std::uint16_t* half, std::uint16_t* quarter) {
   extern __shared__ __align__(16) unsigned char raw[];
   auto* tile = reinterpret_cast<__half*>(raw);
   auto* output = tile + kInputWords;
@@ -153,12 +156,13 @@ __global__ void __launch_bounds__(rn::kThreads, 3)
   sample(sum, p.w, base, lane);
   publish(sum, p.bias, output, warp, lane);
   __syncthreads();
-  arrange(reinterpret_cast<const uint*>(output), full, half, quarter, x * 2, y * 2, batch, id);
+  arrange(reinterpret_cast<const std::uint32_t*>(output), full, half, quarter, x * 2, y * 2, batch, id);
 }
 
 }  // namespace
 
-inline void launch(rn::Params p, ushort* full, ushort* half, ushort* quarter, cudaStream_t stream) {
+inline void launch(rn::Params p, std::uint16_t* full, std::uint16_t* half, std::uint16_t* quarter,
+                   cudaStream_t stream) {
   const dim3 grid((dr::kWidth / 2) / kWidth, (dr::kHeight / 2) / kHeight, dr::kImages);
   project<<<grid, rn::kThreads, kSharedBytes, stream>>>(p, full, half, quarter);
 }

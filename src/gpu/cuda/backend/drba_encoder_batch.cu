@@ -78,8 +78,8 @@ class BatchEncoder final : public DrbaBatchEncoder {
     }
     const auto& final = layers_.back();
     const auto p = rn::params(final, in, static_cast<__half*>(output), nullptr, final.w.as<const void>());
-    drba_encoder_projection::launch(p, static_cast<ushort*>(output), static_cast<ushort*>(half),
-                                    static_cast<ushort*>(quarter), stream);
+    drba_encoder_projection::launch(p, static_cast<std::uint16_t*>(output), static_cast<std::uint16_t*>(half),
+                                    static_cast<std::uint16_t*>(quarter), stream);
     return cudaGetLastError();
   }
 
