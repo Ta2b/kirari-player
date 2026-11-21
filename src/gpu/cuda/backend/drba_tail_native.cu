@@ -3,6 +3,7 @@
 #include <utility>
 #include <vector>
 
+#include "gpu/cuda/backend/drba_tail_hot.cuh"
 #include "gpu/cuda/backend/drba_tail_native.h"
 #include "gpu/cuda/backend/drba_tail_wino.cuh"
 #include "gpu/cuda/backend/rife_native_layer.h"
@@ -200,7 +201,8 @@ class Native final : public DrbaTailNative {
            static_cast<std::size_t>(grid.x) * grid.y * grid.z * rn::kThreads * 12U * sizeof(float4);
   }
 
-  cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse) const override {
+  cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse,
+                      const DrbaGlueParams* hot_glue) const override {
     auto* const base = workspace_.as<std::byte>();
     auto* const mid = reinterpret_cast<__half*>(base);
     auto* state = reinterpret_cast<__half*>(base + kMiddleBytes);
@@ -209,7 +211,14 @@ class Native final : public DrbaTailNative {
     const auto& first = boundary_[0];
     const auto& second = boundary_[1];
     const auto entry = first.params(static_cast<const __half*>(input), mid);
-    if (reuse)
+    if (hot_glue != nullptr) {
+      if (!reuse || hot_glue->width != entry.iw || hot_glue->height != entry.ih || hot_glue->x == nullptr ||
+          hot_glue->y == nullptr || hot_glue->pair01 == nullptr)
+        return cudaErrorInvalidValue;
+      drba_hot::conv_glue_hot<<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem, stream>>>(
+          entry, *hot_glue, cache);
+      if (auto result = cudaGetLastError(); result != cudaSuccess) return result;
+    } else if (reuse)
       conv_with_cache<true><<<first.layer.grid, rn::kThreads, first.layer.smem, stream>>>(entry, cache);
     else
       conv_with_cache<false><<<first.layer.grid, rn::kThreads, first.layer.smem, stream>>>(entry, cache);

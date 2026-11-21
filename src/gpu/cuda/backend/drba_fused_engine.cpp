@@ -170,6 +170,11 @@ std::expected<void, Refusal> DrbaFusedEngine::check_loaded(const std::shared_ptr
         return failed(e, "exécution");
     }
   }
+  if (tail_) {
+    const auto trial = verify_hot_glue(scratch.stream, shared, inputs, motion);
+    if (!trial && trial.error().code == RefusalCode::DeviceLost) return std::unexpected(trial.error());
+    tail_notice_ += hot_glue_ ? ", colle chaude exacte" : ", colle chaude écartée";
+  }
   // Une capture refusée pendant l'essai laisse la chaîne tourner sans graphe : ce n'est pas un refus. Les
   // graphes de l'essai, sur des adresses qui disparaissent, ne servent plus ; les séries d'échecs repartent
   // de zéro, et sa notice part avec eux. Ce que l'essai a gardé dans la zone (D6) désignait ses tampons,
@@ -265,10 +270,42 @@ std::expected<void, Refusal> DrbaFusedEngine::run(cudaStream_t stream,
         return ok;
     }
   }
+  if (auto ok = run_blocks(stream, arena, pair01, times_only, scalar_time); !ok) return ok;
+  const auto last = static_cast<std::size_t>(kernels::kDrbaFusedBlocks - 1);
+  return cuda_check(launch_drba_finish(
+                        {
+                            .height = h,
+                            .width = w,
+                            .upscale = t,
+                            .y = at_ptr(layout_.y[last]),
+                            .pair01 = pair01,
+                            .pair12 = pair12,
+                            .out = outputs.size() == 1 ? fused_address(outputs[0]) : nullptr,
+                            .flow = outputs.size() == 2 ? fused_address(outputs[0]) : nullptr,
+                            .mask = outputs.size() == 2 ? fused_address(outputs[1]) : nullptr,
+                            .y_pitch = tail_          ? DrbaTailNative::kOutputPitch
+                                       : packed_tail_ ? kPackedY2
+                                                      : 0,
+                            .shared_resize = shared_finish_,
+                        },
+                        stream),
+                    "drba_finish<<<>>>");
+}
+
+std::expected<void, Refusal> DrbaFusedEngine::run_blocks(cudaStream_t stream,
+                                                         const std::shared_ptr<SharedActivations>& arena,
+                                                         const void* pair01, bool times_only,
+                                                         bool scalar_time) {
+  const int h = height_, w = width_;
+  auto* base = static_cast<std::byte*>(arena->data()) + scratch_offset_;
+  const auto at = [base](std::size_t offset) { return reinterpret_cast<std::uintptr_t>(base + offset); };
+  const auto at_ptr = [base](std::size_t offset) { return static_cast<void*>(base + offset); };
+  DrbaGlueParams hot{};
   for (int b = 0; b < kernels::kDrbaFusedBlocks; ++b) {
     const auto i = static_cast<std::size_t>(b);
     if (tail_ && b == kLastBlock) {
-      if (auto ok = cuda_check(tail_->enqueue(stream, at_ptr(packed_x_), at_ptr(layout_.y[i]), times_only),
+      if (auto ok = cuda_check(tail_->enqueue(stream, at_ptr(packed_x_), at_ptr(layout_.y[i]), times_only,
+                                              hot.y == nullptr ? nullptr : &hot),
                                "DistilDRBA : bloc 2 natif");
           !ok)
         return ok;
@@ -295,28 +332,14 @@ std::expected<void, Refusal> DrbaFusedEngine::run(cudaStream_t stream,
           .packed_x2 = packed_tail_ && b + 1 == kLastBlock ? at_ptr(packed_x_) : nullptr,
           .compact_time = packed_tail_ && b + 1 == kLastBlock,
           .scalar_time = scalar_time};
-      if (auto ok = cuda_check(launch_drba_glue(glue, stream), "drba_glue<<<>>>"); !ok) return ok;
+      if (times_only && hot_glue_ && b + 1 == kLastBlock) {
+        hot = glue;
+      } else if (auto ok = cuda_check(launch_drba_glue(glue, stream), "drba_glue<<<>>>"); !ok) {
+        return ok;
+      }
     }
   }
-  const auto last = static_cast<std::size_t>(kernels::kDrbaFusedBlocks - 1);
-  return cuda_check(launch_drba_finish(
-                        {
-                            .height = h,
-                            .width = w,
-                            .upscale = t,
-                            .y = at_ptr(layout_.y[last]),
-                            .pair01 = pair01,
-                            .pair12 = pair12,
-                            .out = outputs.size() == 1 ? fused_address(outputs[0]) : nullptr,
-                            .flow = outputs.size() == 2 ? fused_address(outputs[0]) : nullptr,
-                            .mask = outputs.size() == 2 ? fused_address(outputs[1]) : nullptr,
-                            .y_pitch = tail_          ? DrbaTailNative::kOutputPitch
-                                       : packed_tail_ ? kPackedY2
-                                                      : 0,
-                            .shared_resize = shared_finish_,
-                        },
-                        stream),
-                    "drba_finish<<<>>>");
+  return {};
 }
 
 std::expected<void, Refusal> DrbaFusedEngine::enqueue(cudaStream_t stream,

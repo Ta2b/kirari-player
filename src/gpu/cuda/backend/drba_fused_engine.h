@@ -80,6 +80,13 @@ class DrbaFusedEngine final : public Engine {
   std::expected<void, Refusal> run(cudaStream_t stream, const std::shared_ptr<SharedActivations>& arena,
                                    std::span<const Tensor> inputs, std::span<const Tensor> outputs,
                                    bool times_only, bool scalar_time);
+  std::expected<void, Refusal> run_blocks(cudaStream_t stream,
+                                          const std::shared_ptr<SharedActivations>& arena, const void* pair01,
+                                          bool times_only, bool scalar_time);
+  std::expected<bool, Refusal> verify_hot_glue(cudaStream_t stream,
+                                               const std::shared_ptr<SharedActivations>& arena,
+                                               std::span<const Tensor> inputs,
+                                               std::span<const Tensor> outputs);
   std::expected<void, Refusal> enqueue_chain(cudaStream_t stream,
                                              const std::shared_ptr<SharedActivations>& arena,
                                              std::span<const Tensor> inputs, std::span<const Tensor> outputs,
@@ -102,6 +109,7 @@ class DrbaFusedEngine final : public Engine {
   int width_ = 0;
   bool shared_finish_ = false;
   bool packed_tail_ = false;
+  bool hot_glue_ = false;
   std::size_t packed_x_ = 0;
   kernels::DrbaFusedLayout layout_;
   // Début des tampons intermédiaires dans la zone : au-dessus des activations de ses morceaux et de celles

@@ -8,6 +8,8 @@
 
 namespace kirari::gpu::cuda {
 
+struct DrbaGlueParams;
+
 class DrbaTailNative {
  public:
   virtual ~DrbaTailNative() = default;
@@ -17,8 +19,9 @@ class DrbaTailNative {
 
   static constexpr int kOutputPitch = 24;
 
-  // reuse désigne les mêmes images, comme D6.
-  virtual cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse) const = 0;
+  // reuse désigne les mêmes images, comme D6. Avec la colle chaude, seul le cache d'entrée est relu.
+  virtual cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse,
+                              const DrbaGlueParams* hot_glue = nullptr) const = 0;
 };
 
 }  // namespace kirari::gpu::cuda

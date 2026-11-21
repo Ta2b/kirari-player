@@ -62,6 +62,24 @@ tient dans six noyaux.
   intermédiaires et les 106 080 codes de sortie par capture sont identiques au natif large.
   La médiane du bloc complet passe de 165,6 à 153,6 µs. TensorRT prend 82,0 µs dans le même
   banc. La comparaison porte sur quatre activations réelles et une mire, hors lecteur.
+  La mesure par étage attribue l'essentiel du temps aux huit résidus natifs, qui passent
+  de 110,8 à 98,2 µs. Les deux convolutions d'entrée et la projection laissent encore un
+  écart avec le bloc TensorRT entier.
+- À chaud, une autre variante prépare dans la tuile partagée les quatre tranches K16
+  variables de X2 pour la première convolution du bloc natif final. Elle évite de
+  matérialiser le HWC112 chaud, soit 31,33 Mo d'écritures et de relectures logiques.
+  Elle conserve le cache des sommes FP32, l'ordre des MMA et les arrondis. Sur deux
+  scènes et quatre configurations par scène, les 1 566 720 codes de sortie de couche
+  restent identiques et les 6 684 672 octets du cache restent intacts. Au banc, la colle
+  suivie de la convolution passe de 97,0 à 82,9 µs et de 80,8 à 74,6 µs en médiane.
+  En lecture 1080p à ×8 sans SPAN, le moteur complet passe de 0,654–0,666 à
+  0,622–0,625 ms en médiane et de 0,981–0,983 à 0,968–0,975 ms au p95. Les quatre
+  passages utilisent la queue native, avec 165,00 i/s confirmées par Wayland.
+  Le lecteur retient cette fusion à chaud après avoir vérifié les bits et la finitude
+  des vingt canaux utiles de Y2 face à la colle native précédente. La vérification
+  utilise les tampons du chargement. En cas d'écart, le bloc natif garde sa colle.
+  La lecture finale a validé la fusion seule et avec SPAN Performance, ainsi que
+  le repli TensorRT quand l'option de bloc natif est décochée.
 - En lecture Wayland 1080p, une capture Nsight Systems à ×2 mesure 70 relectures du même graphe de
   51 nœuds, à 1,029 ms de médiane. La somme des durées des noyaux atteint 1,028 ms, avec 1,3 µs d'écart
   médian entre la durée du graphe et celle de ses noyaux. La colle d'entrée (0,158 ms) et le rangement
