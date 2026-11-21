@@ -17,8 +17,12 @@ avec des résultats identiques au bit près sur quatre grilles dans les deux ord
 En travail 1080p au demi-flot, les six MLP FP32 du quart réutilisent la tuile
 compacte. Le calcul garde l'ordre des produits et les frontières FP16. La
 mémoire partagée passe de 50 176 à 32 768 octets par bloc, ce qui permet
-trois blocs résidents par SM. Les poids rangés pour le chemin apparié et les
-formes partielles restent disponibles. Le rangement compact ajoute 4,5 Mio.
+trois blocs résidents par SM. Les chemins compact et apparié lisent le même
+paquet de poids, y compris pour les formes partielles. La copie CUDA rassemble
+les deux étages W1 d'une même tranche. Ce partage retire les 4,5 Mio de poids
+dupliqués et six transferts au chargement du GMFlow strict. Le banc rejoue les
+209 433 600 codes FP16 du tableau avec les mêmes sorties. Le temps du MLP
+compact seul varie de 370,04–370,24 à 367,70–368,17 µs, dans la dispersion du banc.
 
 Les neuf sorties des trois triplets et leurs états de réemploi et de changement
 de voie donnent 209 433 600 codes FP16 identiques. À borne modélisée égale

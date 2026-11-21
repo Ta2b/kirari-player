@@ -108,7 +108,7 @@ __global__ void __launch_bounds__(CompactBlock::kThreads, 2) mlp_compact96(Param
 using StrictFrag = rn::Frag<Acc::kF32>;
 inline constexpr int kCompactStrictSmem = Block<4>::kTokens * kChannels * 2 + 4 * kStageVec * 16;
 
-// Une seule tranche cachée en vol. Le flux non apparié met deux étages W1 successifs dans une case large.
+// Une seule tranche cachée en vol. Une case large rassemble deux étages consécutifs de la tranche.
 __device__ __forceinline__ void compact_strict_chunk(StrictFrag (&o)[kTiles], Ring& ring, int& q, __half* s,
                                                      int warp, int lane, const MessageFragments& cached) {
   constexpr int kThreads = Block<4>::kThreads;
@@ -117,7 +117,7 @@ __device__ __forceinline__ void compact_strict_chunk(StrictFrag (&o)[kTiles], Ri
   for (auto& tile : h) tile.clear();
 #pragma unroll 1
   for (int i = 0; i < kStagesPerPlane; i += 2) {
-    const auto* slot = acquire_wide<kThreads>(ring, q++);
+    const auto* slot = acquire_wide<kThreads, true>(ring, q++);
     InputStage a;
     residual_stage(a, s, warp, lane, i);
     gemm1_stage(h, a, slot, lane);
@@ -126,11 +126,11 @@ __device__ __forceinline__ void compact_strict_chunk(StrictFrag (&o)[kTiles], Ri
   }
 #pragma unroll
   for (int i = 0; i < kStagesPerPlane; i += 2) {
-    const auto* slot = acquire_wide<kThreads>(ring, q++);
+    const auto* slot = acquire_wide<kThreads, true>(ring, q++);
     gemm1_stage(h, cached[i], slot, lane);
     gemm1_stage(h, cached[i + 1], slot + kStageVec, lane);
   }
-  paired_gemm2<kThreads>(o, h, ring, q, lane);
+  paired_gemm2<kThreads, true>(o, h, ring, q, lane);
 }
 
 // Seule Ada emprunte ce chemin. Les autres binaires compilent sans contraindre les registres à trois CTA.
@@ -140,7 +140,7 @@ inline constexpr int kCompactStrictBlocks = 2;
 inline constexpr int kCompactStrictBlocks = 3;
 #endif
 
-// Dernier MLP au quart, 1 024 canaux cachés et une seule part.
+// MLP strict au quart avec 1 024 canaux cachés et une seule part.
 __global__ void __launch_bounds__(Block<4>::kThreads, kCompactStrictBlocks) mlp_compact_strict64(Params p) {
   using B = Block<4>;
   constexpr int kHiddenChunks = kCompactHidden / kHiddenTile;
@@ -156,7 +156,7 @@ __global__ void __launch_bounds__(Block<4>::kThreads, kCompactStrictBlocks) mlp_
             .slots = reinterpret_cast<uint4*>(s + B::kTokens * kChannels),
             .next = 0,
             .end = kHiddenChunks * kGroupsPerChunk};
-  issue_wide<B::kThreads>(ring);
+  issue_wide<B::kThreads, true>(ring);
   MessageFragments cached{};
 #pragma unroll
   for (int i = 0; i < kStagesPerPlane; ++i) message_stage(cached[i], p, t0, warp, lane, i);

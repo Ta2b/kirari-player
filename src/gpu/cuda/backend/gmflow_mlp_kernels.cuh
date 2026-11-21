@@ -137,23 +137,41 @@ __device__ __forceinline__ const uint4* acquire(Ring& r, int q) {
 
 // L'anneau large utilise deux cases de deux étages. L'ancienne case n'est réutilisée
 // qu'après le point de rendez-vous qui publie la suivante ; une copie reste en vol pendant le calcul.
-template <int Threads>
+template <int Threads, bool Interleaved = false>
 __device__ __forceinline__ void issue_wide(Ring& r) {
   if (r.next == r.end) return;
   constexpr int kVectors = 2 * kStageVec;
-  const uint4* from = r.w + static_cast<long>(r.next) * kVectors;
   const std::uint32_t to = rn::smem_u32(r.slots + (r.next & 1) * kVectors);
-  for (int i = static_cast<int>(threadIdx.x); i < kVectors; i += Threads)
-    rn::cp_async16(to + static_cast<std::uint32_t>(i * 16), from + i, true);
+  if constexpr (Interleaved) {
+    // Deux tranches de W1 sont intercalées dans le paquet d'origine ; la copie récupère
+    // deux étages de la même tranche. Les étages de W2 restent contigus.
+    constexpr int kGroups = kChunkStages / 2;
+    const int pair = r.next / (2 * kGroups);
+    const int chunk = (r.next / kGroups) & 1;
+    const int step = r.next % kGroups;
+    const bool w1 = step < kW1Stages / 2;
+    const int first = pair * (2 * kChunkStages) +
+                      (w1 ? 4 * step + chunk : 2 * kW1Stages + kK2 * chunk + 2 * (step - kW1Stages / 2));
+    const auto* from = r.w + first * kStageVec;
+    const auto* other = from + (w1 ? 2 : 1) * kStageVec;
+    for (int i = static_cast<int>(threadIdx.x); i < kStageVec; i += Threads) {
+      rn::cp_async16(to + static_cast<std::uint32_t>(i * 16), from + i, true);
+      rn::cp_async16(to + static_cast<std::uint32_t>((i + kStageVec) * 16), other + i, true);
+    }
+  } else {
+    const uint4* from = r.w + static_cast<long>(r.next) * kVectors;
+    for (int i = static_cast<int>(threadIdx.x); i < kVectors; i += Threads)
+      rn::cp_async16(to + static_cast<std::uint32_t>(i * 16), from + i, true);
+  }
   cp_async_commit();
   ++r.next;
 }
 
-template <int Threads>
+template <int Threads, bool Interleaved = false>
 __device__ __forceinline__ const uint4* acquire_wide(Ring& r, int q) {
   cp_async_wait<0>();
   __syncthreads();
-  issue_wide<Threads>(r);
+  issue_wide<Threads, Interleaved>(r);
   return r.slots + (q & 1) * (2 * kStageVec);
 }
 
@@ -308,14 +326,14 @@ __device__ __forceinline__ void chunk(rn::Frag<A> (&o)[kTiles], Ring& ring, int&
   for (int nt = 0; nt < kTiles; ++nt) o[nt].promote();
 }
 
-template <int Threads, Acc A>
+template <int Threads, bool Interleaved = false, Acc A>
 __device__ __forceinline__ void paired_gemm2(rn::Frag<A> (&o)[kTiles], const rn::Frag<A> (&h)[2 * kNP1],
                                              Ring& ring, int& q, int lane) {
 #pragma unroll
   for (int j = 0; j < kK2; j += 2) {
     std::uint32_t a[4];
     gelu_stage(h, j, a);
-    const auto* slot = acquire_wide<Threads>(ring, q++);
+    const auto* slot = acquire_wide<Threads, Interleaved>(ring, q++);
     gemm2_stage(o, a, slot, lane);
     gelu_stage(h, j + 1, a);
     gemm2_stage(o, a, slot + kStageVec, lane);
