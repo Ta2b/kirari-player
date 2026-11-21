@@ -127,6 +127,28 @@ et en NHWC, et n'exporte en plans que les tuiles recalculées. Sur la meilleure 
 Le calcul de l'image B passe de 2,428–2,434 à 2,485–2,486 ms. Le repli complet en présence
 d'une valeur non finie produit la sortie du témoin. Cette stratégie reste au banc.
 
+### Formes fixes du FeatureNet CUDA direct
+
+Sur Ada à 60 SM et pour des plans source 1920 × 1152, le premier noyau FeatureNet utilise des
+tuiles de 32 canaux de sortie, puis les cinq convolutions suivantes des tuiles de 64 canaux.
+Les sommes FP32, leur ordre et les frontières FP16 restent identiques. Le banc au chargement
+des autres voies garde son propre choix. `KIRARI_AB_GMFSS_FEATURE_WIDTH=0` rétablit les tuiles
+historiques de 16 canaux pour comparer sous CUDA direct.
+
+La borne modélisée du FeatureNet A+B est de 2,385 ms sur la RTX 4070 Ti. Elle compte les trois
+convolutions à pas 2 en direct avec canaux complétés par seize, puis les trois convolutions
+à pas 1 en Winograd F(2×2,3×3), avec leurs transformées. Le modèle suppose que les deux
+convolutions de chaque niveau et l'écriture en plans sont fusionnées. Il compte une lecture
+d'entrée et une écriture de sortie pour le niveau. À 80,2 Tflop/s pour les sommes FP32 et
+504 Go/s pour la mémoire, les durées des trois niveaux sont de 0,755, 0,985 et 0,645 ms.
+
+Sur trois paires réelles, les 358 318 080 codes FP16 des six sorties sont identiques.
+Le FeatureNet isolé passe de 10,163 à 6,246 ms en médiane des scènes, soit 23,47 % → 38,19 %
+de la borne. En lecture GMFSS seul sur le passage 48 i/s à ×2, les médianes de la paire
+complète passent de 23,54–23,64 à 19,31–19,47 ms et, avec réemploi de A, de 15,34–15,59 à
+13,59–13,79 ms. En quatre passages Wayland A/B/B/A, 25,31–27,58 → 30,11–36,96 nouvelles
+images/s, sans abandon ni passe de RIFE. Ces cadences dépendent de cet extrait et de la fenêtre.
+
 ### Anneau entre la tête planaire et son premier résiduel
 
 Sur Ada avec au moins 40 Mio de L2, GridNet à 960×576 peut enchaîner les couches 02 et 03 par bandes

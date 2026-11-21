@@ -266,6 +266,12 @@ Tuner ConvNet::select_plan(const prepare::GmfssGrid& grid, const Io& io, const T
   if (tuner.bench == nullptr && ada && sms_ == 60 && io.features_c8 && grid.steps.size() == 45 &&
       height_ == 576 && width_ == 960)
     plan.fixed_large_mask = 0xbfffc17d3bcULL;
+  const char* feature = std::getenv("KIRARI_AB_GMFSS_FEATURE_WIDTH");  // env: banc
+  if (tuner.bench == nullptr && io.image >= 0 && grid.steps.size() == 6 && sms_ == 60 && height_ == 576 &&
+      width_ == 960 && on_ada() && (feature == nullptr || std::string_view(feature) != "0")) {
+    // FeatureNet Union FP32 : CT32 pour l'image, CT64 pour les cinq couches suivantes.
+    plan.fixed_large_mask = 0b111110;
+  }
   try_tail_ = ada && width_ <= 960 && height_ >= gmfss_grid_tail::kRingRows &&
               (tuner.bench != nullptr || plan.fixed_large_mask != 0) &&
               (tail == nullptr || std::string_view(tail) != "0");
