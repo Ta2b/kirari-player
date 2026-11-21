@@ -295,6 +295,46 @@ Balanced et la composition Wayland, les quatre passages de 4.25 donnent
 165,00 nouvelles images/s sans abandon. Lite donne 164,76–165,00 nouvelles
 images/s, avec un abandon sur un passage de chaque variante.
 
+### Répartition de l'écart sur le graphe CUDA direct
+
+Les deux captures avec la colle D1 spécialisée sont regroupées par frontières de blocs. Le chronométrage
+va du premier au dernier noyau de chaque étage. Chaque graphe réencode B et s'arrête à la sortie du
+moteur de mouvement. La borne ci-dessous est celle de la section précédente, avec Winograd 2D et
+fusion par bloc, aux mêmes précision et dimensions.
+
+| Étage | 4.25 mesuré | 4.25 borne | Lite mesuré | Lite borne |
+| --- | ---: | ---: | ---: | ---: |
+| Encodage de B | 161 µs | 42 µs | 166 µs | 42 µs |
+| Premier D8 | 314 µs | 73 µs | 318 µs | 73 µs |
+| Deuxième D8 | 199 µs | 36 µs | — | — |
+| D4 | 442 µs | 87 µs | 588 µs | 145 µs |
+| D2 | 640 µs | 177 µs | 636 µs | 177 µs |
+| D1 | 849 µs | 192 µs | 814 µs | 192 µs |
+
+D2 et D1 représentent ensemble 1,490 ms et 56 % de l'écart à la borne sur 4.25. L'encodeur et les
+blocs grossiers durent 1,115 ms, au-dessus de la cible de 0,675 ms du graphe entier. Les quatre
+captures des deux modèles cumulent 1,3 à 2,5 µs sans noyau actif entre le premier et le dernier noyau
+du graphe. La capture CUDA réduit donc déjà le coût visible des lancements. Les gains attendus d'une
+fusion viennent surtout des transferts et calculs que les noyaux peuvent éviter.
+
+La voie directe choisit aujourd'hui des tuiles et des tranches de somme FP32. Même le noyau qui conserve
+le résiduel en mémoire partagée écrit le résultat de **chaque** convolution. Entre les huit résidus de
+D2 et les huit de D1, les sept frontières par bloc représentent respectivement 58,49 et 116,98 Mo
+d'écriture suivie d'une relecture logique FP16. Le trafic physique dépend de la résidence en L2 et du
+recouvrement des halos. Les premières colles de ces deux blocs prennent ensemble environ 0,598 ms sur 4.25.
+
+Au pic utilisé par le modèle et avant toute provision pour la colle ou les dépendances, 0,6752 ms laisse
+place à 58,6 GFLOP Tensor FP32 et à 340 Mo de trafic DDR. Le profil de référence du chemin direct a
+relevé 104,7 GFLOP et 445 Mo. Même à rendement idéal, atteindre la cible impose donc au minimum de
+réduire ces deux quantités, d'environ 44 % et 24 % respectivement. Ces conditions restent nécessaires
+avec un recouvrement parfait du calcul et de la mémoire.
+
+Deux travaux se complètent. Le Winograd 2D des résidus retire des produits. Leur exécution par groupes,
+avec des tuiles et leur halo conservés entre plusieurs couches, retire des écritures. Les frontières
+FP16, l'addition résiduelle et la pente doivent rester au même endroit pour comparer la qualité. Une
+seconde brique doit réduire les colles multi-échelles et les petites convolutions D8/D4. La mesurer
+séparément montre si le gain sur D1 et D2 se transmet au graphe entier.
+
 ```sh
 python3 -I tools/rife/plafond_cuda.py \
   CACHE/rife_v4.25-fusion3-1088x1920-de0fb71ae50fe082 --graphe-ms 2.6830 2.6229
