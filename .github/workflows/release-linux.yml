@@ -117,11 +117,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Préparer les moteurs expérimentaux
-        if: inputs.moteurs_url != '' || inputs.moteurs_sha256 != ''
+        if: inputs.tag != '' || inputs.moteurs_url != '' || inputs.moteurs_sha256 != ''
         env:
           KIRARI_PORTABLE_URL: ${{ inputs.moteurs_url }}
           KIRARI_PORTABLE_SHA256: ${{ inputs.moteurs_sha256 }}
-        run: python3 -I tools/release/portable-assets.py configure linux "$RUNNER_TEMP/kirari-portable" "$GITHUB_ENV"
+        run: python3 -I tools/release/portable-assets.py configure linux "$RUNNER_TEMP/kirari-portable" "$GITHUB_ENV" --release
       - name: Paquets système
         run: |
           source tools/release/versions.env

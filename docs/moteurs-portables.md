@@ -24,8 +24,10 @@ Un arbre de construction place les fichiers adjacents à l'exécutable. Pour ins
 
 Les scripts de paquet Linux et Windows reprennent ces chemins depuis l'environnement. Une variable de paquet Slang ou Triton active le module correspondant. `KIRARI_WITH_HIP=ON` active HIP. Le script macOS inclut Slang et ZML si leur chemin de paquet est fourni.
 
-**Release rapide** et **Release** acceptent l'URL HTTPS et le SHA-256 d'une archive de ressources
-(`moteurs_url` et `moteurs_sha256`). Le script `tools/release/portable-assets.py` vérifie l'archive puis
+**Release rapide** et **Release** intègrent les moteurs des paquets Linux et Windows depuis l'archive
+épinglée dans [`portable-assets.toml`](../tools/release/portable-assets.toml). Les entrées
+`moteurs_url` et `moteurs_sha256` permettent de choisir une autre archive pour un lancement.
+Le script `tools/release/portable-assets.py` vérifie l'archive puis
 les modules et catalogues assemblés. Pour ZML, la release Linux construit le module PJRT. Le greffon
 du fabricant peut être installé dans le dossier de données de Kirari, y compris avec l'AppImage.
 Windows reste sans greffon PJRT compatible avec la révision utilisée.

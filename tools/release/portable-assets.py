@@ -30,9 +30,13 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def source(required=False):
+def source(required=False, release=False):
     url = os.environ.get("KIRARI_PORTABLE_URL", "")
     sha = os.environ.get("KIRARI_PORTABLE_SHA256", "").lower()
+    if release and not url and not sha:
+        with (HERE / "portable-assets.toml").open("rb") as file:
+            default = tomllib.load(file)
+        url, sha = default["url"], default["sha256"]
     if not url and not sha and not required:
         return None
     parsed = urlsplit(url)
@@ -208,8 +212,8 @@ def cuda_headers(platform, scratch, include):
     require_file(include / "cuda.h")
 
 
-def configure(platform, destination, env_file):
-    url, sha = source(required=True)
+def configure(platform, destination, env_file, release=False):
+    url, sha = source(required=True, release=release)
     destination.mkdir(parents=True)
     with TemporaryDirectory(prefix="kirari-portable-") as scratch:
         scratch = Path(scratch)
@@ -317,11 +321,13 @@ def check_stage(stage, platform):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("source", help="valide les paramètres URL et SHA-256")
+    check_source = commands.add_parser("source", help="valide les paramètres URL et SHA-256")
     prepare = commands.add_parser("configure", help="télécharge, vérifie et configure les ressources")
     prepare.add_argument("platform", choices=("linux", "windows"))
     prepare.add_argument("destination", type=Path)
     prepare.add_argument("env_file", type=Path)
+    for command in (check_source, prepare):
+        command.add_argument("--release", action="store_true", help="utilise l’archive épinglée sans surcharge")
     stage = commands.add_parser("check-stage", help="vérifie les moteurs installés avant l'archivage du lecteur")
     stage.add_argument("platform", choices=("linux", "windows"))
     stage.add_argument("stage", type=Path)
@@ -333,9 +339,9 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "source":
-            source()
+            source(required=args.release, release=args.release)
         elif args.command == "configure":
-            configure(args.platform, args.destination.resolve(), args.env_file)
+            configure(args.platform, args.destination.resolve(), args.env_file, release=args.release)
         elif args.command == "check-stage":
             check_stage(args.stage, args.platform)
         elif args.command == "pack":

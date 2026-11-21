@@ -98,12 +98,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           IN_TENSORRT: ${{ inputs.tensorrt }}
-          PORTABLE_URL: ${{ inputs.moteurs_url }}
         run: |
           source tools/release/versions.env
           span_fp16=OFF
           options=(--windows)
-          if [[ "$KIRARI_TAG" == *-* && -n "$PORTABLE_URL" ]]; then
+          if [[ -n "$KIRARI_TAG" ]]; then
             span_fp16=ON
             options+=(--span-fp16)
           fi
@@ -295,12 +294,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Préparer les moteurs expérimentaux
-        if: inputs.moteurs_url != '' || inputs.moteurs_sha256 != ''
+        if: inputs.tag != '' || inputs.moteurs_url != '' || inputs.moteurs_sha256 != ''
         shell: pwsh
         env:
           KIRARI_PORTABLE_URL: ${{ inputs.moteurs_url }}
           KIRARI_PORTABLE_SHA256: ${{ inputs.moteurs_sha256 }}
-        run: python -I tools/release/portable-assets.py configure windows "$env:RUNNER_TEMP/kirari-portable" "$env:GITHUB_ENV"
+        run: python -I tools/release/portable-assets.py configure windows "$env:RUNNER_TEMP/kirari-portable" "$env:GITHUB_ENV" --release
       # L'index du paquet TensorRT Windows, pris AVANT toute construction : le jeton n'est jamais dans
       # l'environnement d'un code tiers (A28-08). Un paquet joint à l'étiquette elle-même reste lu en second.
       - name: Index TensorRT
