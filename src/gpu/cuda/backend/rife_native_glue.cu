@@ -580,8 +580,9 @@ GlueLaunch pick_d2_taps(std::span<const int> scales) {
   return nullptr;
 }
 
-GlueLaunch pick_d2_lite32(std::span<const int> scales) {
+GlueLaunch pick_d2_direct32(std::span<const int> scales) {
   if (scales.size() == 2 && match_scales<3>(scales)) return d2_taps_one<2, true, Acc::kF32>;
+  if (scales.size() == 3 && match_scales<4>(scales)) return d2_taps_one<3, true, Acc::kF32>;
   return nullptr;
 }
 

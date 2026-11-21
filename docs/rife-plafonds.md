@@ -248,6 +248,13 @@ DDR et 2 311,39 Mo en L2. La borne Tensor, recalculée à 107,21 GFLOP au
 même débit, vaut 1,236 ms, soit 48,9 % de la durée du graphe. Le rapport
 reste limité au travail du moteur dans cette recette.
 
+Sur RIFE 4.25 CUDA direct, quatre captures par variante et le même
+dixième rejeu ramènent la médiane du graphe de 2,683 à 2,623 ms. La colle
+D2 seule passe de 254–260 à 207–212 µs, avec le même nombre de produits
+Tensor et les mêmes sommes FP32. Avec une borne Tensor de 1,206 ms des
+71 noyaux, le rapport passe de **45,0 % à 46,0 %**. La comparaison des
+images et la cadence confirmée sont données dans [RIFE natif](rife-natif.md).
+
 ### Gains à vérifier
 
 - Pour RIFE, le gain Tensor brut de Winograd 2D atteint 0,242 ms pour 4.25 et 0,254 ms pour Lite avec un

@@ -238,9 +238,8 @@ class Net final : public RifeNativeNet {
     if (layer.sums == RifeNativeSums::kF16 &&
         std::ranges::all_of(scales, [](int scale) { return scale % 4 == 0; }))
       return rn::pick_d2_taps(scales);
-    if (direct_lite_1080_ && layer.sums == RifeNativeSums::kF32 && sms_ == 60 && layer.oh == 272 &&
-        layer.ow == 480)
-      return rn::pick_d2_lite32(scales);
+    if (!autotune_ && layer.sums == RifeNativeSums::kF32 && sms_ == 60 && layer.oh == 272 && layer.ow == 480)
+      return rn::pick_d2_direct32(scales);
     return nullptr;
   }
 

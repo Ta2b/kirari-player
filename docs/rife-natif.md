@@ -380,8 +380,13 @@ de 4,54–4,59 à 4,08–4,30 ms sur le premier extrait, et de 4,36–4,60 à
 4,17–4,19 ms sur le second. Wayland renvoie environ 165 et 158 nouvelles
 images/s sur les deux extraits, dans les deux modes. Un passage candidat
 du premier extrait a un abandon. Le gain reproductible porte sur le temps
-du réseau. Le 4.25 garde sa recette, les temps de son premier essai avec les
-deux noyaux se recouvrant avec ceux du témoin.
+du réseau. Sur 4.25, les temps de l'essai des deux noyaux se recouvrent
+avec ceux du témoin. Retenir seulement la colle D2 donne une médiane GPU
+de 3,13–3,14 ms contre 3,33–3,35 ms sur le premier extrait, et de 3,55–3,56
+contre 3,69–3,75 ms sur le second. Avec SPAN Balanced les cadences confirmées
+restent à 165,00 et 158,33 nouvelles images/s selon l'extrait, sans abandon
+dans les huit passages. Les trois images de contrôle de 4.25 sont identiques
+bit à bit au témoin. La tête à quatre phases FP32 reste propre au Lite.
 
 L'essai complet :
 
