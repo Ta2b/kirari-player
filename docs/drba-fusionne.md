@@ -129,13 +129,20 @@ tient dans six noyaux.
   donne 1,342 et 0,795 ms au p95. La trace du lecteur confirme que le
   lancement de rangement disparaît pour le bloc natif et revient avec le
   repli sur TensorRT.
-- Une variante étend la colle fusionnée à froid. Elle charge les trois
+- La colle fusionnée s'applique aussi à froid sur Ada. Elle charge les trois
   premières tranches K16 dans la même tuile que les tranches variables
   et publie le même cache de sommes FP32. Elle évite aussi le tampon
   variable de X2. Sur deux scènes et quatre réglages par scène, les
   1 566 720 codes FP16 et les 6 684 672 octets du cache restent identiques.
-  En ABBA isolé, la colle suivie de la convolution passe de 269 à 161 µs
-  et de 137 à 94 µs avec permutation XOR. La voie reste au banc.
+  En ABBA isolé avec les versions sans débordement de registres, la colle
+  suivie de la convolution passe de 145 à 109 µs et de 133 à 94 µs.
+  Au chargement, le lecteur vérifie la sortie à froid et sa reprise à chaud
+  avant de retenir la voie. La colle séparée sert en cas d'écart.
+  En lecture à ×8 avec SPAN Performance FP16, le p95 moteur passe de
+  0,796–0,798 à 0,719–0,729 ms. Les quatre passages confirment 693
+  images nouvelles à 165,00 i/s sur Wayland. À ×2, le comparatif du
+  prototype passe de 1,312–1,334 à 1,186–1,217 ms au p95, et le passage
+  du module final donne 1,34 ms au p95 et 47,995 i/s.
 - Dans le bloc 0 natif, un préchargement calcule les quatre transformées
   verticales de Winograd dans les registres avant de publier la tuile.
   Les mêmes opérandes arrivent aux MMA. Les huit états de 97 920 codes

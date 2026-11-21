@@ -171,9 +171,10 @@ std::expected<void, Refusal> DrbaFusedEngine::check_loaded(const std::shared_ptr
     }
   }
   if (tail_) {
-    const auto trial = verify_hot_glue(scratch.stream, shared, inputs, motion);
+    const auto trial = verify_glue(scratch.stream, shared, inputs, motion);
     if (!trial && trial.error().code == RefusalCode::DeviceLost) return std::unexpected(trial.error());
-    tail_notice_ += hot_xor_    ? ", colle chaude exacte XOR"
+    tail_notice_ += cold_glue_  ? ", colles froide et chaude exactes XOR"
+                    : hot_xor_  ? ", colle chaude exacte XOR"
                     : hot_glue_ ? ", colle chaude exacte"
                                 : ", colle chaude écartée";
   }
@@ -303,14 +304,14 @@ std::expected<void, Refusal> DrbaFusedEngine::run_blocks(cudaStream_t stream,
   auto* base = static_cast<std::byte*>(arena->data()) + scratch_offset_;
   const auto at = [base](std::size_t offset) { return reinterpret_cast<std::uintptr_t>(base + offset); };
   const auto at_ptr = [base](std::size_t offset) { return static_cast<void*>(base + offset); };
-  DrbaGlueParams hot{};
+  DrbaGlueParams fused{};
   for (int b = 0; b < kernels::kDrbaFusedBlocks; ++b) {
     const auto i = static_cast<std::size_t>(b);
     if (tail_ && b == kLastBlock) {
-      if (auto ok =
-              cuda_check(tail_->enqueue(stream, at_ptr(packed_x_), at_ptr(layout_.y[i]), times_only,
-                                        hot.y == nullptr ? nullptr : &hot, hot_xor_, at_ptr(layout_.x[i])),
-                         "DistilDRBA : bloc 2 natif");
+      if (auto ok = cuda_check(
+              tail_->enqueue(stream, at_ptr(packed_x_), at_ptr(layout_.y[i]), times_only,
+                             fused.y == nullptr ? nullptr : &fused, hot_xor_, at_ptr(layout_.x[i])),
+              "DistilDRBA : bloc 2 natif");
           !ok)
         return ok;
       break;
@@ -336,8 +337,8 @@ std::expected<void, Refusal> DrbaFusedEngine::run_blocks(cudaStream_t stream,
           .packed_x2 = packed_tail_ && b + 1 == kLastBlock ? at_ptr(packed_x_) : nullptr,
           .compact_time = packed_tail_ && b + 1 == kLastBlock,
           .scalar_time = scalar_time};
-      if (times_only && hot_glue_ && b + 1 == kLastBlock) {
-        hot = glue;
+      if (b + 1 == kLastBlock && (times_only ? hot_glue_ : cold_glue_)) {
+        fused = glue;
       } else if (auto ok = cuda_check(launch_drba_glue(glue, stream), "drba_glue<<<>>>"); !ok) {
         return ok;
       }

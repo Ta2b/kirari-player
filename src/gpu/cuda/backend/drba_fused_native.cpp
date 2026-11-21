@@ -177,48 +177,54 @@ std::expected<std::string, Refusal> DrbaFusedEngine::try_native_tail(
 }
 
 // La dernière passe de l'essai complet a rempli le cache natif sur ce même flux.
-std::expected<bool, Refusal> DrbaFusedEngine::verify_hot_glue(cudaStream_t stream,
-                                                              const std::shared_ptr<SharedActivations>& arena,
-                                                              std::span<const Tensor> inputs,
-                                                              std::span<const Tensor> outputs) {
-  if (!packed_tail_ || plan_.tail != 4 || height_ != 1088 || width_ != 1920) return false;
+std::expected<void, Refusal> DrbaFusedEngine::verify_glue(cudaStream_t stream,
+                                                          const std::shared_ptr<SharedActivations>& arena,
+                                                          std::span<const Tensor> inputs,
+                                                          std::span<const Tensor> outputs) {
+  if (!packed_tail_ || plan_.tail != 4 || height_ != 1088 || width_ != 1920) return {};
   constexpr int last = kernels::kDrbaFusedBlocks - 1;
   const auto y = kernels::drba_fused_y(plan_, last, height_, width_);
   const std::size_t elements =
       static_cast<std::size_t>(y.width) * static_cast<std::size_t>(y.height) * kOutputPitch;
   const std::size_t bytes = elements * sizeof(__half);
   auto* const output = static_cast<std::byte*>(arena->data()) + scratch_offset_ + layout_.y[last];
-  const auto fetch = [&](std::vector<__half>& host) -> std::expected<void, Refusal> {
+  const auto fetch = [&](std::vector<__half>& host, bool reuse) -> std::expected<void, Refusal> {
     if (auto ok = cuda_check(cudaMemsetAsync(output, 0xFF, bytes, stream), "DistilDRBA : sentinelles Y2");
         !ok)
       return ok;
-    if (auto ok = run(stream, arena, inputs, outputs, true, true); !ok) {
-      const auto drained = cuda_check(cudaStreamSynchronize(stream), "DistilDRBA : fin de l'essai chaud");
+    if (auto ok = run(stream, arena, inputs, outputs, reuse, true); !ok) {
+      const auto drained = cuda_check(cudaStreamSynchronize(stream), "DistilDRBA : fin de l'essai de colle");
       return drained ? ok : drained;
     }
     auto result = cudaMemcpyAsync(host.data(), output, bytes, cudaMemcpyDeviceToHost, stream);
     if (result == cudaSuccess) result = cudaStreamSynchronize(stream);
-    return cuda_check(result, "DistilDRBA : relire Y2 à chaud");
+    return cuda_check(result, "DistilDRBA : relire Y2 pour l'essai de colle");
   };
 
   std::vector<__half> reference(elements), candidate(elements);
-  if (auto ok = fetch(reference); !ok) return std::unexpected(ok.error());
-  hot_glue_ = true;
-  auto result = fetch(candidate);
   const auto written = [](std::span<const __half> values) {
     for (std::size_t i = 0; i < values.size(); ++i)
       if (i % kOutputPitch < kUsedChannels && !std::isfinite(__half2float(values[i]))) return false;
     return true;
   };
-  hot_glue_ = result && written(reference) && same_tail_fields(reference, candidate);
-  if (!result) return std::unexpected(result.error());
-  if (!hot_glue_) return false;
+  const auto try_mode = [&](bool& enabled, bool reuse) {
+    enabled = true;
+    auto result = fetch(candidate, reuse);
+    enabled = result && same_tail_fields(reference, candidate);
+    return result;
+  };
 
-  hot_xor_ = true;
-  result = fetch(candidate);
-  hot_xor_ = result && same_tail_fields(reference, candidate);
-  if (!result) return std::unexpected(result.error());
-  return true;
+  if (auto ok = fetch(reference, true); !ok) return ok;
+  if (!written(reference)) return {};
+  if (auto ok = try_mode(hot_glue_, true); !ok || !hot_glue_) return ok;
+  if (auto ok = try_mode(hot_xor_, true); !ok || !hot_xor_) return ok;
+  if (auto ok = fetch(reference, false); !ok) return ok;
+  if (!written(reference)) return {};
+  if (auto ok = try_mode(cold_glue_, false); !ok || !cold_glue_) return ok;
+  // Le graphe suivant pourra reprendre les sommes écrites par la fusion froide.
+  auto reused = fetch(candidate, true);
+  cold_glue_ = reused && same_tail_fields(reference, candidate);
+  return reused;
 }
 
 }  // namespace kirari::gpu::cuda

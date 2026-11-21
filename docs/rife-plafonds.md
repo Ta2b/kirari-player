@@ -145,11 +145,11 @@ Le rapprochement a été effectué avec `bilan-corrige.py` de la série.
   0,066 ms dans un scénario où son aller-retour passerait entièrement en DDR à 504 Go/s. Les quelques
   étapes grossières du moteur font encore circuler leurs `X_k` et `Y_k` globaux.
 - DistilDRBA conserve les frontières planaires `X_0` et `X_1` (16,12 Mo aller-retour pour les deux).
-  Le dernier bloc natif lit 56 canaux fixes de `X_2` dans les plans. À froid, la colle écrit les
-  56 autres dans le tampon au pas 112, et la convolution les relit (29,25 Mo logiques). À chaud, la
-  colle fusionnée produit ces 56 canaux dans la tuile et reprend au moins 6,27 Mo de sommes
-  intermédiaires FP32. Si le contrôle de la fusion échoue, la colle réécrit ces canaux dans le
-  tampon. En repli sur TensorRT, le rangement complet écrit puis relit 112 canaux (58,49 Mo).
+  Le dernier bloc natif lit directement les plans fixes de `X_2`. La colle fusionnée produit les
+  canaux variables dans la tuile à froid et à chaud. Elle écrit les sommes à froid puis relit au
+  moins 6,27 Mo de sommes FP32 par reprise. La colle séparée sur le bloc natif garde 29,25 Mo
+  de transferts logiques par passe. En repli sur TensorRT, le rangement complet écrit puis
+  relit 112 canaux (58,49 Mo).
   La tête écrit `Y_2` à basse résolution (pas 24) et le warp final lit 20 canaux de cette sortie.
   Le warp lit deux sources RGB selon le flot et écrit une sortie RGB, soit un volume de référence
   de 37,60 Mo pour des lectures couvrant les deux sources une fois. Les déplacements et la localité
@@ -205,6 +205,6 @@ et 2 588,52 Mo au L2. Sa borne de trafic est de 0,942 ms et sa durée profilée 
 - DistilDRBA applique déjà Winograd vertical sur huit résidus de la queue. Passer de cette queue verticale
   et de blocs grossiers directs à Winograd 2D sur tous les 3×3 éligibles ne retire que 0,041 à 0,044 ms de
   calcul Tensor au pic FP16. La préparation de `X_2` est déjà fusionnée à chaud sur Ada, avec réemploi
-  de ses sommes intermédiaires. À froid, la première convolution du dernier bloc natif lit directement
-  56 plans de `X_2` et supprime 29,25 Mo de transfert logique de rangement. Il reste à mesurer les
-  octets DDR et L2 du graphe à froid après ce changement. [Voie actuelle](drba-fusionne.md).
+  de ses sommes intermédiaires. À froid, la première convolution du dernier bloc natif lit les plans
+  fixes et produit les canaux variables en partagé. Il reste à mesurer les octets DDR et L2 du
+  graphe à froid avec cette fusion. [Voie actuelle](drba-fusionne.md).

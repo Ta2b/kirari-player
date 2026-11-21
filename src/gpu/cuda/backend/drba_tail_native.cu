@@ -29,34 +29,16 @@ constexpr std::size_t kCacheOffset = kMiddleBytes + 2U * kStateBytes;
 template <class G>
 __device__ __forceinline__ void load_planar_x2(__half* tile, rn::Params p, const __half* planar, int q,
                                                int y0, int x0) {
-  constexpr int kLds = 24, kPairs = (G::kIC - 1) / 2;
+  constexpr int kLds = drba_hot::input_pitch<false>;
   const int channels = q == kPlanarChannels / 16 ? kPlanarChannels % 16 : 16;
-  const int thread = static_cast<int>(threadIdx.x);
-  const int plane = p.ih * p.iw;
-  const auto index = [](int r, int col, int channel) { return (r * G::kIC + col) * kLds + channel; };
-  // x0 et la largeur sont pairs. Le pixel impair à gauche est chargé à part.
-  for (int i = thread; i < channels * G::kIR * kPairs; i += rn::kThreads) {
-    const int c = i / (G::kIR * kPairs), r = (i / kPairs) % G::kIR, col = i % kPairs;
-    const int x = x0 + 2 * col, y = y0 + r;
-    const bool valid = y >= 0 && y < p.ih && x < p.iw;
-    const __half* source = valid ? planar + (q * 16 + c) * plane + y * p.iw + x : planar;
-    const __half2 pair =
-        valid ? __ldg(reinterpret_cast<const __half2*>(source)) : __floats2half2_rn(0.F, 0.F);
-    tile[index(r, G::kEven + col, c)] = __low2half(pair);
-    tile[index(r, col + 1, c)] = __high2half(pair);
-  }
-  for (int i = thread; i < channels * G::kIR; i += rn::kThreads) {
-    const int c = i % channels, r = i / channels, x = x0 - 1, y = y0 + r;
-    const bool valid = y >= 0 && y < p.ih && x >= 0 && x < p.iw;
-    tile[index(r, 0, c)] = valid ? __ldg(planar + (q * 16 + c) * plane + y * p.iw + x) : __ushort_as_half(0);
-  }
+  drba_hot::load_x2_planes<false>(tile, planar, p.iw, p.ih, channels, q, x0, y0);
   if (q != kPlanarChannels / 16) return;
   const auto base = rn::smem_u32(tile);
-  for (int i = thread; i < G::kIR * G::kIC; i += rn::kThreads) {
+  for (int i = static_cast<int>(threadIdx.x); i < G::kIR * G::kIC; i += rn::kThreads) {
     const int r = i / G::kIC, col = i % G::kIC, x = x0 + col - 1, y = y0 + r;
     const bool valid = y >= 0 && y < p.ih && x >= 0 && x < p.iw;
     const auto* source = valid ? p.in + (y * p.iw + x) * p.in_ld + kPlanarChannels : p.in;
-    const int at = index(r, rn::smem_col<2, G::kIC>(col), kPlanarChannels % 16);
+    const int at = (r * G::kIC + rn::smem_col<2, G::kIC>(col)) * kLds + kPlanarChannels % 16;
     rn::cp_async16(base + static_cast<std::uint32_t>(at * 2), source, valid);
   }
 }
@@ -244,7 +226,7 @@ class Native final : public DrbaTailNative {
   }
 
   cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse,
-                      const DrbaGlueParams* hot_glue, bool compact_tile, const void* planar) const override {
+                      const DrbaGlueParams* glue, bool compact_tile, const void* planar) const override {
     auto* const base = workspace_.as<std::byte>();
     auto* const mid = reinterpret_cast<__half*>(base);
     auto* state = reinterpret_cast<__half*>(base + kMiddleBytes);
@@ -253,17 +235,19 @@ class Native final : public DrbaTailNative {
     const auto& first = boundary_[0];
     const auto& second = boundary_[1];
     const auto entry = first.params(static_cast<const __half*>(input), mid);
-    if (hot_glue != nullptr) {
-      if (!reuse || hot_glue->width != entry.iw || hot_glue->height != entry.ih || hot_glue->x == nullptr ||
-          hot_glue->y == nullptr || hot_glue->pair01 == nullptr)
+    if (glue != nullptr) {
+      if ((!reuse && !compact_tile) || glue->width != entry.iw || glue->height != entry.ih ||
+          glue->x == nullptr || glue->y == nullptr || glue->pair01 == nullptr)
         return cudaErrorInvalidValue;
-      if (compact_tile)
-        drba_hot::conv_glue_hot<true>
-            <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<true>, stream>>>(entry, *hot_glue, cache);
+      if (!reuse)
+        drba_hot::conv_glue<true, true>
+            <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<true>, stream>>>(entry, *glue, cache);
+      else if (compact_tile)
+        drba_hot::conv_glue<true>
+            <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<true>, stream>>>(entry, *glue, cache);
       else
-        drba_hot::conv_glue_hot<false>
-            <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<false>, stream>>>(entry, *hot_glue,
-                                                                                      cache);
+        drba_hot::conv_glue<false>
+            <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<false>, stream>>>(entry, *glue, cache);
       if (auto result = cudaGetLastError(); result != cudaSuccess) return result;
     } else if (planar != nullptr) {
       const auto* planes = static_cast<const __half*>(planar);

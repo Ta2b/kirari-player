@@ -191,6 +191,7 @@ __device__ __forceinline__ void set_controls(__half* tile, const Motion<Xor>* fl
   }
 }
 
+template <bool Prefetch = true>
 __device__ __forceinline__ void accumulate_xor(rn::Frag<rn::Acc::kF32> (&acc)[2][6], const __half* tile,
                                                const uint4* w, int q, int warp, int lane) {
   constexpr int groups = kCt / 16, chunks = 7;
@@ -202,11 +203,15 @@ __device__ __forceinline__ void accumulate_xor(rn::Frag<rn::Acc::kF32> (&acc)[2]
     for (int n = 0; n < groups; ++n) b[n] = __ldg(wl + (ks * groups + n) * 32);
   };
   uint4 b[groups];
-  fetch(b, 0);
+  if constexpr (Prefetch) fetch(b, 0);
 #pragma unroll 1
   for (int tap = 0; tap < 9; ++tap) {
     uint4 next[groups];
-    if (tap < 8) fetch(next, tap + 1);
+    if constexpr (Prefetch) {
+      if (tap < 8) fetch(next, tap + 1);
+    } else {
+      fetch(b, tap);
+    }
     const int dy = tap / 3, dx = tap % 3;
     const int col0 = dx == 1 ? G::kEven : dx / 2;
     std::uint32_t a[2][4];
@@ -224,15 +229,44 @@ __device__ __forceinline__ void accumulate_xor(rn::Frag<rn::Acc::kF32> (&acc)[2]
         acc[f][2 * n + 1].mma(a[f], b[n].z, b[n].w);
       }
     }
-    if (tap < 8)
+    if (Prefetch && tap < 8)
 #pragma unroll
       for (int n = 0; n < groups; ++n) b[n] = next[n];
   }
 }
 
+// Les plans couvrent une largeur paire et x0 est pair. Charger les pixels
+// par paires laisse seulement le bord gauche impair à lire séparément.
 template <bool Xor>
+__device__ __forceinline__ void load_x2_planes(__half* tile, const __half* source, int width, int height,
+                                               int channels, int q, int x0, int y0) {
+  constexpr int pairs = (G::kIC - 1) / 2;
+  const int tid = static_cast<int>(threadIdx.x), area = width * height;
+  const auto dst = [tile](int r, int col, int c) -> __half& {
+    const int pixel = r * G::kIC + col;
+    const int lane = Xor ? vector_xor(pixel, c / 8) * 8 + c % 8 : c;
+    return tile[pixel * input_pitch<Xor> + lane];
+  };
+  for (int i = tid; i < channels * G::kIR * pairs; i += rn::kThreads) {
+    const int c = i / (G::kIR * pairs), r = (i / pairs) % G::kIR, col = i % pairs;
+    const int x = x0 + 2 * col, y = y0 + r;
+    const bool valid = y >= 0 && y < height && x < width;
+    const auto* at = valid ? source + (q * kKc + c) * area + y * width + x : source;
+    const __half2 pair = valid ? __ldg(reinterpret_cast<const __half2*>(at)) : __floats2half2_rn(0.F, 0.F);
+    dst(r, G::kEven + col, c) = __low2half(pair);
+    dst(r, col + 1, c) = __high2half(pair);
+  }
+  for (int i = tid; i < channels * G::kIR; i += rn::kThreads) {
+    const int c = i % channels, r = i / channels, x = x0 - 1, y = y0 + r;
+    const bool valid = y >= 0 && y < height && x >= 0 && x < width;
+    dst(r, 0, c) = valid ? __ldg(source + (q * kKc + c) * area + y * width + x) : __ushort_as_half(0);
+  }
+}
+
+template <bool Xor, bool Cold = false>
 __global__ void __launch_bounds__(rn::kThreads, Xor ? 3 : 2)
-    conv_glue_hot(rn::Params p, DrbaGlueParams g, const float4* cache) {
+    conv_glue(rn::Params p, DrbaGlueParams g, float4* cache) {
+  static_assert(!Cold || Xor);
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ != 890
   // Cette fusion est sélectionnée uniquement avec le bloc fin natif Ada.
   __trap();
@@ -244,26 +278,47 @@ __global__ void __launch_bounds__(rn::kThreads, Xor ? 3 : 2)
   const int ty = static_cast<int>(blockIdx.y) * G::kTH;
   const int tx = static_cast<int>(blockIdx.x) * rn::kTW;
   const int left = tx * kS - 1, top = ty * kS - 1;
+  const auto block = static_cast<std::size_t>(blockIdx.y) * gridDim.x + blockIdx.x;
+  auto* partial = cache + (12 * block * rn::kThreads) + tid;
+  constexpr int kChunks = 7;
+  rn::Frag<rn::Acc::kF32> acc[2][6];
+#pragma unroll
+  for (int f = 0; f < 2; ++f)
+#pragma unroll
+    for (int n = 0; n < 6; ++n) {
+      if constexpr (Cold) {
+        acc[f][n].clear();
+      } else {
+        const auto a = __ldg(partial + (6 * f + n) * rn::kThreads);
+        acc[f][n].r[0] = a.x;
+        acc[f][n].r[1] = a.y;
+        acc[f][n].r[2] = a.z;
+        acc[f][n].r[3] = a.w;
+      }
+    }
+  if constexpr (Cold) {
+#pragma unroll 1
+    for (int q = 0; q < 3; ++q) {
+      load_x2_planes<true>(tile, static_cast<const __half*>(g.x), g.width, g.height, kKc, q, left + 1, top);
+      __syncthreads();
+      // La première partie dispose de moins de registres car elle écrit le cache.
+      accumulate_xor<false>(acc, tile, p.w, q, warp, lane);
+      __syncthreads();
+    }
+#pragma unroll
+    for (int f = 0; f < 2; ++f)
+#pragma unroll
+      for (int n = 0; n < 6; ++n) {
+        const auto& a = acc[f][n].r;
+        partial[(6 * f + n) * rn::kThreads] = make_float4(a[0], a[1], a[2], a[3]);
+      }
+  }
   set_flows<Xor>(flows, g, left, top, tid);
   __syncthreads();
 
   const auto full_area = static_cast<std::size_t>(g.full_width) * g.full_height;
   const float tau = 2.F * __half2float(static_cast<const __half*>(g.pair01)[6U * full_area]);
   const bool before = before_side(tau);
-  const auto block = static_cast<std::size_t>(blockIdx.y) * gridDim.x + blockIdx.x;
-  const auto* partial = cache + (12 * block * rn::kThreads) + tid;
-  rn::Frag<rn::Acc::kF32> acc[2][6];
-#pragma unroll
-  for (int f = 0; f < 2; ++f)
-#pragma unroll
-    for (int n = 0; n < 6; ++n) {
-      const auto a = __ldg(partial + (6 * f + n) * rn::kThreads);
-      acc[f][n].r[0] = a.x;
-      acc[f][n].r[1] = a.y;
-      acc[f][n].r[2] = a.z;
-      acc[f][n].r[3] = a.w;
-    }
-  constexpr int kChunks = 7;
 #pragma unroll 1
   for (int q = 3; q < kChunks; ++q) {
     if (q != 3) __syncthreads();
