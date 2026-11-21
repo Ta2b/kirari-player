@@ -38,7 +38,7 @@ std::expected<std::unique_ptr<DrbaFusedEngine>, Refusal> DrbaFusedEngine::load(
   const int t = key.plan.tail;
   if (h == 1088 && w == 1920) {
     int device = 0, major = 0, minor = 0;
-    engine->shared_finish_ =
+    engine->ada_1080p_ =
         cudaGetDevice(&device) == cudaSuccess &&
         cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
         cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) == cudaSuccess &&
@@ -98,7 +98,7 @@ std::expected<std::int64_t, Refusal> DrbaFusedEngine::load_blocks(
     const int x_pitch = (*block)->input_pitch(0);
     const int y_pitch = (*block)->output_pitch(0);
     const bool packed =
-        b == kLastBlock && t == 4 && shared_finish_ && x_pitch == kPackedX2 && y_pitch == kPackedY2;
+        b == kLastBlock && t == 4 && ada_1080p_ && x_pitch == kPackedX2 && y_pitch == kPackedY2;
     if (!packed && (x_pitch != 0 || y_pitch != 0)) {
       return refuse(RefusalCode::FormatUnsupported,
                     std::format("DistilDRBA fusionné : rangement inattendu du bloc {}", b));
@@ -290,7 +290,7 @@ std::expected<void, Refusal> DrbaFusedEngine::run(cudaStream_t stream,
                             .y_pitch = tail_          ? DrbaTailNative::kOutputPitch
                                        : packed_tail_ ? kPackedY2
                                                       : 0,
-                            .shared_resize = shared_finish_,
+                            .shared_resize = ada_1080p_,
                         },
                         stream),
                     "drba_finish<<<>>>");
@@ -339,8 +339,10 @@ std::expected<void, Refusal> DrbaFusedEngine::run_blocks(cudaStream_t stream,
           .scalar_time = scalar_time};
       if (b + 1 == kLastBlock && (times_only ? hot_glue_ : cold_glue_)) {
         fused = glue;
-      } else if (auto ok = cuda_check(launch_drba_glue(glue, stream), "drba_glue<<<>>>"); !ok) {
-        return ok;
+      } else {
+        const auto launch =
+            b == 0 && ada_1080p_ && plan_.tail == 4 ? launch_drba_glue_b1_interleaved : launch_drba_glue;
+        if (auto ok = cuda_check(launch(glue, stream), "drba_glue<<<>>>"); !ok) return ok;
       }
     }
   }

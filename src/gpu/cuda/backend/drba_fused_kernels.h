@@ -74,6 +74,8 @@ struct DrbaFinishParams {
 cudaError_t launch_drba_pre(const DrbaPreParams& params, cudaStream_t stream);
 cudaError_t launch_drba_post(const DrbaPostParams& params, cudaStream_t stream);
 cudaError_t launch_drba_glue(const DrbaGlueParams& params, cudaStream_t stream);
+// Variante planaire B0 vers B1. L'appelant filtre Ada et le lanceur vérifie la forme.
+cudaError_t launch_drba_glue_b1_interleaved(const DrbaGlueParams& params, cudaStream_t stream);
 cudaError_t launch_drba_pack_x2(const void* x2, void* packed, int height, int width, cudaStream_t stream);
 cudaError_t launch_drba_finish(const DrbaFinishParams& params, cudaStream_t stream);
 

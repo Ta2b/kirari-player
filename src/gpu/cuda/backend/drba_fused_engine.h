@@ -106,7 +106,7 @@ class DrbaFusedEngine final : public Engine {
   kernels::DrbaFusedPlan plan_;
   int height_ = 0;
   int width_ = 0;
-  bool shared_finish_ = false;
+  bool ada_1080p_ = false;
   bool packed_tail_ = false;
   bool hot_glue_ = false;
   bool hot_xor_ = false;

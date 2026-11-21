@@ -49,6 +49,26 @@ convolution. Sur les passages chronométrés en alternance, la médiane baisse
 d'environ 97 à 77 µs, rangement final compris. Le changement concerne l'encodage
 à froid. Le rejeu à temps seul réutilise déjà les encodages.
 
+### Colle B0→B1 en trois groupes indépendants
+
+À 1920 × 1088 sur Ada, la transition planaire B0→B1 répartit les plans de
+contrôle et les deux warps en trois groupes. Les groupes relisent les mêmes
+valeurs et conservent les arrondis du Resize, du flot et des warps. La
+variante est basée sur la disposition étudiée dans le banc Triton. La
+comparaison dans le lecteur, avec les voies image et mouvement, couvre
+133 693 440 codes FP16 identiques, avec et sans réemploi et pour les deux
+rangements temporels testés. Le chemin compact et le rangement X2 HWC8
+gardent leur implémentation dédiée.
+
+Avec SPAN Performance et une sortie Wayland à 165 Hz, la médiane des nœuds
+B0→B1 des quatre passages alternés passe de 19,200 à 13,248 µs. En prenant
+une seule visite des secteurs utiles des quatre captures et 2,748 To/s au
+L2, leur borne de trafic vaut 2,191 µs, soit **11,4 % → 16,5 %** sur cette
+étape. Le modèle exclut les instructions de calcul et le reste du réseau.
+Les quatre passages affichent environ 165 nouvelles images/s, sans abandon.
+Le binaire final confirme 13,248 µs sur 671 nœuds, avec 164,84 nouvelles
+images/s et un abandon sur cette passe.
+
 ## Proposition initiale du 19 novembre 2026
 
 Le plan ci-dessous visait les trois blocs et l'encodeur. Les noms, estimations et options correspondent

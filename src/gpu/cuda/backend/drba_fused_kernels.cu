@@ -260,6 +260,81 @@ __global__ void __launch_bounds__(kGlueThreads, Packed ? kPackedGlueBlocks : 0)
   }
 }
 
+constexpr int kB1Height = 136, kB1Width = 240, kB1Pixels = kB1Height * kB1Width;
+constexpr int kB1Threads = 128;
+
+struct GlueResize2 {
+  int i00, i01, i10, i11;
+  float wx, wy;
+};
+
+__device__ __forceinline__ int glue_depth_index(int y, int x) {
+  constexpr int w = kB1Width / 4, plane = kB1Height / 4 * w;
+  return (2 * (y & 1) + (x & 1)) * plane + (y / 2) * w + x / 2;
+}
+
+__device__ __forceinline__ GlueResize2 glue_resize2(int x, int y) {
+  // Les fractions .25 et .75 du Resize ×2 sont exactes aux bords de cette forme.
+  const int x0 = min(max(0, x - 1) / 2, kB1Width / 2 - 1);
+  const int y0 = min(max(0, y - 1) / 2, kB1Height / 2 - 1);
+  const int x1 = min(x0 + 1, kB1Width / 2 - 1), y1 = min(y0 + 1, kB1Height / 2 - 1);
+  const float wx = (x == 0 || x == kB1Width - 1) ? 0.F : ((x & 1) ? .25F : .75F);
+  const float wy = (y == 0 || y == kB1Height - 1) ? 0.F : ((y & 1) ? .25F : .75F);
+  return {glue_depth_index(y0, x0),
+          glue_depth_index(y0, x1),
+          glue_depth_index(y1, x0),
+          glue_depth_index(y1, x1),
+          wx,
+          wy};
+}
+
+__device__ __forceinline__ float glue_sample_control(const __half* source, const GlueResize2& r, int plane) {
+  const auto* head = source + plane * (kB1Pixels / 4);
+  const float a = __half2float(head[r.i00]);
+  const float b = __half2float(head[r.i01]);
+  const float c = __half2float(head[r.i10]);
+  const float d = __half2float(head[r.i11]);
+  return rounded((a * (1.F - r.wx) + b * r.wx) * (1.F - r.wy) + (c * (1.F - r.wx) + d * r.wx) * r.wy);
+}
+
+// Les blocs des contrôles et des deux warps sont intercalés. Chaque groupe calcule
+// ses propres prises de flot et ne lit aucun des plans écrits par les autres.
+__global__ void __launch_bounds__(kB1Threads, 4) glue_b1_interleaved(DrbaGlueParams p) {
+  const int group = static_cast<int>(blockIdx.x) % 3;
+  const int pixel = static_cast<int>(blockIdx.x) / 3 * kB1Threads + static_cast<int>(threadIdx.x);
+  if (pixel >= kB1Pixels) return;
+  const int x = pixel % kB1Width, y = pixel / kB1Width;
+  const auto control = glue_resize2(x, y);
+  const auto* y0 = static_cast<const __half*>(p.y);
+  auto* const out = static_cast<__half*>(p.x);
+  const auto store = [&](int plane, float v) { out[plane * kB1Pixels + pixel] = __float2half_rn(v); };
+  const auto time = [&]() {
+    const auto num_pixels = static_cast<std::size_t>(p.full_height) * p.full_width;
+    return 2.F * __half2float(static_cast<const __half*>(p.pair01)[6 * num_pixels]);
+  };
+
+  if (group == 0) {
+#pragma unroll 2
+    for (int c = 0; c < 4; ++c) store(105 + c, glue_sample_control(y0, control, c) * 2.F);
+#pragma unroll 3
+    for (int c = 4; c < 13; ++c) store(92 + c, glue_sample_control(y0, control, c));
+    if (p.scalar_time) store(kTimeChannel, time());
+    return;
+  }
+
+  const int side = group - 1;
+  const float dx = rounded(glue_sample_control(y0, control, 2 * side) * 2.F);
+  const float dy = rounded(glue_sample_control(y0, control, 2 * side + 1) * 2.F);
+  const Tap warp = tap_of(x, y, dx, dy, kB1Width, kB1Height);
+  const bool before = side != 0 && before_side(time());
+  const int image = side == 0 ? 3 : before ? 0 : 6;
+  const int encoding = side == 0 ? 25 : before ? 9 : 41;
+#pragma unroll 3
+  for (int c = 0; c < 3; ++c) store(57 + 3 * side + c, sample(out + (image + c) * kB1Pixels, warp));
+#pragma unroll 4
+  for (int c = 0; c < 16; ++c) store(63 + 16 * side + c, sample(out + (encoding + c) * kB1Pixels, warp));
+}
+
 constexpr int kFinishWidth = 32, kFinishHeight = 8;
 
 // Le halo bilinéaire tient dans (taille du bloc / S + 2) par axe. La lecture FP16 vers FP32
@@ -431,6 +506,15 @@ cudaError_t launch_drba_glue(const DrbaGlueParams& params, cudaStream_t stream) 
   } else {
     glue_kernel<false><<<grid, block, 0, stream>>>(params);
   }
+  return cudaGetLastError();
+}
+
+cudaError_t launch_drba_glue_b1_interleaved(const DrbaGlueParams& params, cudaStream_t stream) {
+  if (params.width != kB1Width || params.height != kB1Height || params.full_width != 1920 ||
+      params.full_height != 1088 || params.packed_x2 != nullptr || params.compact_time)
+    return launch_drba_glue(params, stream);
+  constexpr int tiles = (kB1Pixels + kB1Threads - 1) / kB1Threads;
+  glue_b1_interleaved<<<3 * tiles, kB1Threads, 0, stream>>>(params);
   return cudaGetLastError();
 }
 
