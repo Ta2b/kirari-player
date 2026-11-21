@@ -796,6 +796,14 @@ une référence ONNX Runtime CPU exécutant les mêmes fichiers donne après rec
 
 Sur la première paire, 1 337 pixels sur 2 073 600 ont un écart de plus de 0,04 dans
 au moins un canal RGB. L'écart maximal se trouve en (922, 534), après recadrage.
+Un rejeu sur CPU injecte séparément les six flots GMFlow natifs et l'entrée du
+MetricNet d'une capture indépendante des mêmes trames. Le témoin CPU donne 95,87 dB
+face à la référence de rendu, le rejeu avec les flots 52,82 dB et celui avec l'entrée
+MetricNet 61,65 dB. Avec les deux groupes, le rejeu donne 52,77 dB et reproduit le
+pic du canal vert à 0,00049 près. Le sous-échantillonnage de la paire est bit à bit
+identique. Il reste à instrumenter les sorties intermédiaires du prototype direct
+pour attribuer le résidu.
+
 Le banc isolé utilise une référence séquentielle pour les projections et inclut des
-transferts. Le passage au lecteur demande les projections parallèles existantes,
-l'identification de l'étage qui produit l'écart local et une mesure Wayland avec composition.
+transferts. Le passage au lecteur demande les projections parallèles existantes et
+une mesure Wayland avec composition.
