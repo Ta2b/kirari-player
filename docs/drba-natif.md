@@ -90,6 +90,24 @@ Le Winograd des 3×3 de pas 1 concerne les couches suivantes du bloc.
 Le p95 du moteur entier passe de 0,73 à 0,71–0,72 ms. Les deux passages
 candidats affichent 165,00 nouvelles images/s sans abandon via Wayland.
 
+### Projection B2 par paires de phases
+
+Dans le bloc final natif 1920 × 1088 sur Ada 60 SM, chaque CTA calcule
+deux phases horizontales de la transposée et partage le fragment
+d'activation central. Le noyau conserve l'ordre K16 puis prise de chaque
+phase et le pas de sortie à 24 demi-flottants. Les vingt plans de
+mouvement utiles et les quatre zéros de remplissage restent identiques.
+La qualification compare 267 386 880 codes FP16 du lecteur sur deux
+scènes, en mode image et mouvement, avec deux formes de tuiles candidates.
+
+Avec SPAN Performance ×8 et la composition Wayland, la transposée passe
+de 20,592 à 14,928 µs en médiane. Ses 0,501 GFLOP utiles à sommes FP32
+donnent une borne Tensor de 5,779 µs à 86,75 TFLOP/s, soit **28,07 %
+→ 38,71 %** à borne identique pour la projection seule. Les deux
+passages retenus affichent 165,00 nouvelles images/s sans abandon.
+Le binaire final confirme 14,912 µs de médiane sur 670 nœuds et
+164,999 nouvelles images/s, sans abandon.
+
 ## Proposition initiale du 19 novembre 2026
 
 Le plan ci-dessous visait les trois blocs et l'encodeur. Les noms, estimations et options correspondent

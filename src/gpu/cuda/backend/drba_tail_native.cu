@@ -5,6 +5,7 @@
 
 #include "gpu/cuda/backend/drba_tail_hot.cuh"
 #include "gpu/cuda/backend/drba_tail_native.h"
+#include "gpu/cuda/backend/drba_tail_projection.cuh"
 #include "gpu/cuda/backend/drba_tail_wino.cuh"
 #include "gpu/cuda/backend/rife_native_layer.h"
 
@@ -190,12 +191,11 @@ class Native final : public DrbaTailNative {
   cudaError_t setup(std::span<const RifeNativeConv> layers, cudaStream_t stream) {
     if (!compatible_recipe(layers)) return cudaErrorInvalidValue;
     int device = 0, major = 0, minor = 0, sm_count = 0;
-    narrow_ingress_ =
-        cudaGetDevice(&device) == cudaSuccess &&
-        cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
-        cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) == cudaSuccess &&
-        cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device) == cudaSuccess &&
-        major == 8 && minor == 9 && sm_count == 60;
+    ada_60_sm_ = cudaGetDevice(&device) == cudaSuccess &&
+                 cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
+                 cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) == cudaSuccess &&
+                 cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device) == cudaSuccess &&
+                 major == 8 && minor == 9 && sm_count == 60;
     const std::vector<float> slopes(static_cast<std::size_t>(kChannels), 0.2F);
     if (auto status = upload_sync(slopes_, slopes, stream); status != cudaSuccess) return status;
     if (auto status =
@@ -225,7 +225,7 @@ class Native final : public DrbaTailNative {
     }
     const auto bytes = workspace_bytes();
     if (auto status = workspace_.allocate(bytes); status != cudaSuccess) return status;
-    if (!narrow_ingress_) return cudaSuccess;
+    if (!ada_60_sm_) return cudaSuccess;
     // La grille étroite ne calcule pas les fragments hors image. Le repli large
     // peut lire ces emplacements sans produire de pixel à partir d'eux.
     if (auto status =
@@ -255,8 +255,7 @@ class Native final : public DrbaTailNative {
       if ((!reuse && !compact_tile) || glue->width != entry.iw || glue->height != entry.ih ||
           glue->x == nullptr || glue->y == nullptr || glue->pair01 == nullptr)
         return cudaErrorInvalidValue;
-      const bool narrow =
-          narrow_ingress_ && compact_tile && glue->full_width == 1920 && glue->full_height == 1088;
+      const bool narrow = ada_60_sm_ && compact_tile && glue->full_width == 1920 && glue->full_height == 1088;
       if (narrow) {
         constexpr int tile = drba_hot::kNarrowWidth;
         constexpr int smem = drba_hot::kFusedSmem<true, tile>;
@@ -312,8 +311,11 @@ class Native final : public DrbaTailNative {
       std::swap(state, next);
     }
     const auto& projection = boundary_[2];
-    projection.layer.launch(projection.layer.grid, projection.layer.smem, stream,
-                            projection.params(state, static_cast<__half*>(output)));
+    const auto params = projection.params(state, static_cast<__half*>(output));
+    if (ada_60_sm_)
+      drba_tail_projection::launch(params, stream);
+    else
+      projection.layer.launch(projection.layer.grid, projection.layer.smem, stream, params);
     return cudaGetLastError();
   }
 
@@ -322,7 +324,7 @@ class Native final : public DrbaTailNative {
   std::array<Residual, 8> residuals_;
   rn::Buffer slopes_;
   rn::Buffer workspace_;
-  bool narrow_ingress_ = false;
+  bool ada_60_sm_ = false;
 };
 
 }  // namespace
