@@ -328,6 +328,64 @@ __global__ void __launch_bounds__(256) finish_kernel(DrbaFinishParams p) {
   }
 }
 
+template <int S, int Width, int Height>
+__device__ __forceinline__ void enlarge_pair(const TileZ<Width, Height>& z, int x, int y, float (&r)[2][5]) {
+  constexpr float inverse = 1.0F / S;
+  const auto clipped = [](int pixel, int limit) {
+    return fminf(fmaxf((static_cast<float>(pixel) + 0.5F) * inverse - 0.5F, 0.0F),
+                 static_cast<float>(limit - 1));
+  };
+  const float sx = clipped(x, z.zw), sy = clipped(y, z.zh), sy_next = clipped(y + 1, z.zh);
+  const int x0 = static_cast<int>(sx), y0 = static_cast<int>(sy);
+  const int x1 = min(x0 + 1, z.zw - 1), y1 = min(y0 + 1, z.zh - 1);
+  const float wx = sx - static_cast<float>(x0);
+  const float wy0 = sy - static_cast<float>(y0), wy1 = sy_next - static_cast<float>(y0);
+#pragma unroll
+  for (int c = 0; c < 5; ++c) {
+    const float a = read_z(z, c, y0, x0), b = read_z(z, c, y0, x1);
+    const float d = read_z(z, c, y1, x0), e = read_z(z, c, y1, x1);
+    const float h0 = a * (1.0F - wx) + b * wx;
+    const float h1 = d * (1.0F - wx) + e * wx;
+    r[0][c] = rounded(h0 * (1.0F - wy0) + h1 * wy0);
+    r[1][c] = rounded(h0 * (1.0F - wy1) + h1 * wy1);
+  }
+}
+
+__global__ void __launch_bounds__(128) finish_motion_pairs(DrbaFinishParams p) {
+  constexpr int S = 4;
+  constexpr int tw = kFinishWidth / S + 2, th = kFinishHeight / S + 2, cells = tw * th;
+  const SourceZ z{static_cast<const __half*>(p.y), p.height / S, p.width / S, p.y_pitch};
+  __shared__ float input[5 * cells];
+  const int left = static_cast<int>(blockIdx.x) * (tw - 2) - 1;
+  const int top = static_cast<int>(blockIdx.y) * (th - 2) - 1;
+  const int tid = static_cast<int>(threadIdx.y * blockDim.x + threadIdx.x);
+  for (int j = tid; j < 5 * cells; j += 128) {
+    const int c = j / cells, i = j % cells;
+    const int zy = max(0, min(z.zh - 1, top + i / tw));
+    const int zx = max(0, min(z.zw - 1, left + i % tw));
+    input[j] = read_z(z, c, zy, zx);
+  }
+  __syncthreads();
+  const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int first = static_cast<int>(blockIdx.y) * kFinishHeight + 2 * static_cast<int>(threadIdx.y);
+  if (x >= p.width || first >= p.height) return;
+  const std::size_t plane = static_cast<std::size_t>(p.height) * static_cast<std::size_t>(p.width);
+  float values[2][5];
+  // La frontière du Resize demi-pixel se situe à une ligne paire pour S = 4.
+  // Les deux lignes issues d'un même thread emploient les mêmes quatre entrées.
+  enlarge_pair<S>(TileZ<tw, th>{input, z.zh, z.zw, left, top}, x, first, values);
+#pragma unroll
+  for (int j = 0; j < 2; ++j) {
+    const int y = first + j;
+    const std::size_t o = static_cast<std::size_t>(y) * static_cast<std::size_t>(p.width) + x;
+    const auto* r = values[j];
+    auto* flow = static_cast<__half*>(p.flow);
+#pragma unroll
+    for (int k = 0; k < 4; ++k) flow[k * plane + o] = __float2half_rn(r[k] * static_cast<float>(S));
+    static_cast<__half*>(p.mask)[o] = __float2half_rn(1.0F / (1.0F + expf(-r[4])));
+  }
+}
+
 dim3 grid_for(int w, int h, dim3 block) {
   return dim3((static_cast<unsigned>(w) + block.x - 1) / block.x,
               (static_cast<unsigned>(h) + block.y - 1) / block.y);
@@ -389,7 +447,9 @@ cudaError_t launch_drba_pack_x2(const void* x2, void* packed, int height, int wi
 cudaError_t launch_drba_finish(const DrbaFinishParams& params, cudaStream_t stream) {
   const dim3 block(kFinishWidth, kFinishHeight);
   const dim3 grid = grid_for(params.width, params.height, block);
-  if (params.shared_resize && params.upscale == 4)
+  if (params.shared_resize && params.upscale == 4 && params.y_pitch != 0 && params.flow != nullptr)
+    finish_motion_pairs<<<grid, dim3(kFinishWidth, kFinishHeight / 2), 0, stream>>>(params);
+  else if (params.shared_resize && params.upscale == 4)
     finish_kernel<4><<<grid, block, 0, stream>>>(params);
   else if (params.shared_resize && params.upscale == 8)
     finish_kernel<8><<<grid, block, 0, stream>>>(params);

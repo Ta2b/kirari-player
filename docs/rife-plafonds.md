@@ -174,13 +174,20 @@ inclut le warp interne du modèle et le bloc final natif avec réemploi. Les dé
 | RIFE 4.22 Lite | 358,92 Mo | 2 244,00 Mo | 1,918 ms | 0,817 ms |
 | DistilDRBA v2 Lite, colle séparée | 120,37 Mo | 737,08 Mo | 0,795 ms | 0,268 ms |
 | DistilDRBA v2 Lite, colle chaude fusionnée | 98,07 Mo | 688,84 Mo | 0,710 ms | 0,251 ms |
+| DistilDRBA v2 Lite, colle chaude XOR | 97,18 Mo | 694,29 Mo | 0,771 ms | 0,253 ms |
 
 La borne prend le plus grand des deux temps estimés avec les octets mesurés. Elle
-porte sur le trafic de ces graphes et exclut la composition. Les deux captures de DistilDRBA
+porte sur le trafic de ces graphes et exclut la composition. Les captures de DistilDRBA
 encadrent le dixième rejeu à chaud. Après fusion, les baisses de trafic sont de 18,5 % en DDR
 et de 6,5 % au L2. Le quotient de la borne de trafic par la durée profilée passe de 33,7 à 35,3 %.
 Ce quotient mesure l'écart aux débits mémoire pour le volume observé, hors coût de calcul et
 hors plafond après les autres simplifications.
+
+La capture de la variante XOR utilise elle aussi la sortie RGB et le même état chaud. L'identifiant
+du graphe est rapproché du journal de cette séance. Avec 97,18 Mo DDR et 694,29 Mo L2, le volume
+est proche du graphe fusionné précédent. Le gain observé en lecture est cohérent avec le
+réemploi des coordonnées et la résidence accrue. Le chronométrage isolé de cette capture, à
+fréquences variables, est plus long de 61 µs. [Mesures appariées du lecteur](drba-fusionne.md).
 
 Un graphe RIFE 4.25 avec un nouvel encodage, à la même taille, a lu et écrit 451,13 Mo
 en DDR et transféré 2 516,07 Mo au L2. Pour ce trafic, la borne est de 0,916 ms. La capture

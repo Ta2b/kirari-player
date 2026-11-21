@@ -96,6 +96,17 @@ tient dans six noyaux.
   La variante de tuile double W32 sur les huit résidus C96 garde aussi les bits,
   mais abaisse l'occupation de six à trois blocs par SM et coûte 147–148 µs
   contre 109–110 µs. Elle reste au banc.
+- En sortie mouvement avec le Y2 rangé par pixel, deux lignes consécutives
+  partagent les mêmes voisins du Resize ×4. Sur Ada en 1080p, un thread réutilise
+  les deux interpolations horizontales avant les deux arrondis séparés. Le banc
+  vérifie les 10 444 800 codes de flot et masque sur deux scènes et deux pas
+  HWC (24 et 56), ainsi que les tuiles partielles aux bords. Avec le pas 24, la
+  fin passe de 30,00–31,94 à 22,21–23,67 µs en médiane.
+  En lecture avec SPAN Performance FP16 ×2 et warp après SPAN, les deux passages
+  témoins donnent un p95 moteur de 0,874–0,877 ms. Les deux candidats donnent
+  0,867–0,874 ms et les médianes se recouvrent. Le moteur et le warp 4K sont deux
+  mesures distinctes. Dans la fenêtre Wayland centrale, 691 à 693 images nouvelles
+  sont confirmées par passage, à 165,00 i/s, sans retour manquant.
 - En lecture Wayland 1080p, une capture Nsight Systems à ×2 mesure 70 relectures du même graphe de
   51 nœuds, à 1,029 ms de médiane. La somme des durées des noyaux atteint 1,028 ms, avec 1,3 µs d'écart
   médian entre la durée du graphe et celle de ses noyaux. La colle d'entrée (0,158 ms) et le rangement
