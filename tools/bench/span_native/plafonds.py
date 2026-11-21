@@ -11,6 +11,7 @@ import onnx
 PEAK_MMA = 160e12  # FLOP/s, RTX 4070 Ti, sommes FP16, sans sparsité
 PEAK_FP32 = 60 * 128 * 2.61e9  # instructions/s pour des additions et multiplications simples
 DRAM = 504e9
+L2 = 2.748e12  # bande passante mesurée sur deux tampons de 16 Mio
 BLOCK = re.compile(r"block_(\d+)\.(c[123]_r\.eval_conv|att_conv)\.weight")
 
 
@@ -81,7 +82,7 @@ def convolution(h, w, stage, form):
     return mma, transform, traffic
 
 
-def calculate(c, count, h, w, form, fused_tail):
+def calculate(c, count, h, w, form, fused_tail, *, ddr_fraction=1., fused_body=False):
     first = convolution(h, w, Stage(c, 12, 9), "direct")
     cat = convolution(h, w, Stage(c, 4 * c, 1), "direct")
     pixel = convolution(h, w, Stage(48, c, 9), "direct")
@@ -92,7 +93,12 @@ def calculate(c, count, h, w, form, fused_tail):
     # La porte 1×1 lit le fragment 3×3 local. Ses accumulateurs ne sortent pas vers la VRAM.
     gate = (2 * h * w * c * c, 0, 2 * c * c)
     finish = tuple(a + b for a, b in zip(third, gate, strict=True))
-    body = [stage for _ in range(count) for stage in (lower, second, finish)]
+    block = (lower, second, finish)
+    if fused_body:
+        mma, transform, traffic = (sum(column) for column in zip(*block, strict=True))
+        # Les sorties C1 et C2 et le résiduel de C3 restent dans le bloc.
+        block = ((mma, transform, traffic - 10 * h * w * c),)
+    body = list(block) * count
     if fused_tail:
         mma, transform, traffic = body.pop()
         body.append((mma + cat[0], transform + cat[1], traffic + cat[2] - 4 * h * w * c))
@@ -100,7 +106,7 @@ def calculate(c, count, h, w, form, fused_tail):
         body.append(cat)
     stages = [first, *body, pixel]
     compute = sum(m / PEAK_MMA for m, _, _ in stages)
-    estimated = sum(max(m / PEAK_MMA + f / PEAK_FP32, b / DRAM) for m, f, b in stages)
+    estimated = sum(max(m / PEAK_MMA + f / PEAK_FP32, b * ddr_fraction / DRAM, b / L2) for m, f, b in stages)
     return 1000 * compute, 1000 * estimated
 
 
@@ -109,12 +115,19 @@ def main():
     parser.add_argument("models", nargs="+")
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--width", type=int, default=1920)
+    parser.add_argument("--ddr", type=float, default=1., help="part du trafic logique en DDR, entre 0 et 1")
+    parser.add_argument("--fusion-blocs", action="store_true",
+                        help="garde les sorties C1/C2 et le résiduel sur puce à l'intérieur de chaque bloc")
     args = parser.parse_args()
     if args.height <= 0 or args.width <= 0:
         parser.error("dimensions strictement positives attendues")
+    if not 0 <= args.ddr <= 1:
+        parser.error("part DDR entre 0 et 1 attendue")
     h, w = ceil_to(args.height, 2), ceil_to(args.width, 2)
-    print("Calcul MMA seul et modèle par étage avec transformations et transfert VRAM")
-    print("La mémoire du modèle suppose une lecture et une écriture des tenseurs à chaque étage.")
+    print(f"Calcul MMA seul et modèle par étage avec transformations et {100 * args.ddr:g} % de trafic DDR")
+    if args.fusion_blocs:
+        print("Fusion idéale de C1, C2, C3 et de la porte dans chaque bloc.")
+    print("La mémoire du modèle suppose une lecture et une écriture aux frontières des étages.")
     print("Des lectures intermédiaires peuvent être servies par le cache. La qualité se mesure séparément.")
     for model in args.models:
         channels, blocks = model_stages(model)
@@ -122,8 +135,9 @@ def main():
         for form in ("direct", "vertical", "hybride", "F2", "F4"):
             if form == "hybride" and channels != 48:
                 continue
-            mma, separate = calculate(channels, blocks, h, w, form, False)
-            _, fused = calculate(channels, blocks, h, w, form, True)
+            inputs = channels, blocks, h, w, form
+            mma, separate = calculate(*inputs, False, ddr_fraction=args.ddr, fused_body=args.fusion_blocs)
+            _, fused = calculate(*inputs, True, ddr_fraction=args.ddr, fused_body=args.fusion_blocs)
             print(f"  {form:9} · MMA {mma:5.3f} ms · modèle {separate:5.3f} ms"
                   f" · queue fusionnée {fused:5.3f} ms · 90 % de ce modèle {fused/.9:5.3f} ms")
 
