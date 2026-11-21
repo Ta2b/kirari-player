@@ -192,6 +192,7 @@ std::expected<bool, StageFailure> RifeLoad::cuda_direct() {
   if (!*loaded) return false;
   (motion ? c.rife_motion : c.rife) = std::move(**loaded);
   c.rife_fused = true;
+  c.rife_cuda_direct = true;
   if (!load_calm_rife(p, init, c, inner, library, models_dir, true)) return false;
   return load_half_rife(p, init, c, settings, inner, library, models_dir, true).value_or(false);
 }

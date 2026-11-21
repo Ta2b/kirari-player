@@ -178,8 +178,9 @@ struct ChainEngines {
   float gmfss_px = 15.0F;
   std::int64_t gmfss_cost_us = 0;  // GmfssSetup::cost_us et pair_us
   std::int64_t gmfss_pair_us = 0;
-  bool rife_fused = false;  // rife ou rife_motion est RIFE fusionné (six moteurs et noyaux de colle)
-  bool drba_fused = false;  // drba est DistilDRBA fusionné (quatre moteurs et noyaux de colle)
+  bool rife_fused = false;        // rife ou rife_motion suit le découpage fusionné
+  bool rife_cuda_direct = false;  // les poids ont été chargés directement dans nos noyaux CUDA
+  bool drba_fused = false;        // drba est DistilDRBA fusionné (quatre moteurs et noyaux de colle)
   // Le fusionné essayé puis refusé, le réseau entier à sa place (A03-21) : voir OpenedChain.
   std::optional<RefusalCode> rife_fused_refused;
   std::optional<RefusalCode> drba_fused_refused;

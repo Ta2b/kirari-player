@@ -62,6 +62,21 @@ TEST_CASE("GMFSS seul prend la taille de travail sans moteur RIFE", "[app][chain
   CHECK(chain.motion_label(settings).find("×10") != std::string::npos);
 }
 
+TEST_CASE("RIFE CUDA direct a son libellé et son historique Auto", "[app][chain][rife]") {
+  ChainEngines chain;
+  chain.rife_model = "rife425.onnx";
+  chain.rife_motion = std::make_unique<test::FakeEngine>("rife", std::vector<std::string>{"input"},
+                                                         std::vector<std::string>{"flow", "mask"});
+  chain.rife_fused = true;
+  const std::string fused_label = chain.motion_label(PlaySettings{});
+  const std::string fused_history = chain.auto_memory_engine("balanced");
+
+  chain.rife_cuda_direct = true;
+  CHECK(chain.motion_label(PlaySettings{}).find("CUDA") != std::string::npos);
+  CHECK(chain.motion_label(PlaySettings{}) != fused_label);
+  CHECK(chain.auto_memory_engine("balanced") != fused_history);
+}
+
 TEST_CASE("Interpolation : seulement aux cadences d'un anime", "[app][chain]") {
   for (const double fps : {23.976, 24.0, 25.0, 29.97, 30.0, 23.975, 29.971}) CHECK(anime_rate(fps));
   for (const double fps : {12.0, 15.0, 47.952, 48.0, 50.0, 59.94, 60.0, 120.0, 24.5})

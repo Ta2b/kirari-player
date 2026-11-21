@@ -120,7 +120,10 @@ std::string_view ChainEngines::motion_name() const {
 std::string ChainEngines::auto_memory_engine(std::string_view span_variant) const {
   std::string out(motion_name());
   if (!use_drba() && rife_model) out += " " + core::to_utf8(rife_model->stem());
-  if (rife_fused || drba_fused) out += " fusionné";
+  if (rife_cuda_direct)
+    out += " CUDA direct";
+  else if (rife_fused || drba_fused)
+    out += " fusionné";
   if (rife_motion || drba_motion) out += " mouvement";
   if (gmfss_use == GmfssUse::Middle) out += " GMFSS au milieu";
   if (model) out += " " + core::to_utf8(model->path.stem());
@@ -141,13 +144,16 @@ std::string ChainEngines::motion_label(const PlaySettings& settings) const {
     return std::format("DistilDRBA {}{}{} · ", cadence, drba_fused ? i18n::tr(" fused") : "", reduced);
   if (use_apple()) return std::format("Apple {} · VideoToolbox · ", cadence);
   if (gmfss_use == GmfssUse::Only) return std::format("GMFSS union {} · ", cadence);
-  if ((rife || rife_motion) && rife_model)
-    return std::format("RIFE {} · {}{}{}{} · ", cadence, core::to_utf8(rife_model->stem()),
-                       rife_fused ? i18n::tr(" fused") : "",
+  if ((rife || rife_motion) && rife_model) {
+    const std::string_view implementation = rife_cuda_direct ? i18n::tr(" · Direct CUDA")
+                                            : rife_fused     ? i18n::tr(" fused")
+                                                             : "";
+    return std::format("RIFE {} · {}{}{}{} · ", cadence, core::to_utf8(rife_model->stem()), implementation,
                        gmfss_use != GmfssUse::Middle ? ""
                        : gmfss_px == 0.0F            ? i18n::tr(" + GMFSS union on every pair")
                                                      : i18n::tr(" + GMFSS union on fast motion"),
                        reduced);
+  }
   return {};
 }
 
