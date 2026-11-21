@@ -129,7 +129,8 @@ namespace kirari::gpu {
 // 62 : SpanTileGrid porte le pas vertical du Winograd par paires de lignes.
 // 63 : le module TensorRT applique les trois replis des réglages expérimentaux.
 // 64 : le flux accepte une demande de guidage HDR et rend sa carte par ticket.
-inline constexpr int kBackendAbi = 64;
+// 65 : le module NVIDIA distingue le mode CUDA natif et les plans TensorRT.
+inline constexpr int kBackendAbi = 65;
 
 using DeviceUuid = kirari::DeviceUuid;
 

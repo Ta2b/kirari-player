@@ -19,6 +19,7 @@ layout(push_constant) uniform Push {
   uint padded_height;
   uint left;
   uint top;
+  uint extend_edge;
   float black;  // noir de studio en RGB
 } pc;
 
@@ -31,6 +32,11 @@ void main() {
   bool inside = x >= pc.left && y >= pc.top && x - pc.left < pc.width && y - pc.top < pc.height;
   uint source_plane = pc.width * pc.height;
   uint j = inside ? (y - pc.top) * pc.width + (x - pc.left) : 0u;
+  if (pc.extend_edge != 0u) {
+    ivec2 pos = clamp(ivec2(x,y) - ivec2(pc.left,pc.top), ivec2(0), ivec2(pc.width,pc.height)-1);
+    j = uint(pos.y) * pc.width + uint(pos.x);
+    inside = true;
+  }
   for (uint c = 0u; c < 3u; ++c) {
     input_planes.v[c * plane + i] = inside ? a.v[c * source_plane + j] : KIRARI_TENSOR(pc.black);
     input_planes.v[(3u + c) * plane + i] = inside ? b.v[c * source_plane + j] : KIRARI_TENSOR(pc.black);

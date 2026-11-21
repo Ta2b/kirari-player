@@ -104,6 +104,6 @@ GpuFacts gpu_facts(const PlaceboScreen& screen);
 bool tensorrt_backend_present(const EngineCatalog& catalog, const PlayerPaths& paths);
 // Les backends présents ou téléchargeables (catalog).
 EnginesHere engines_here(const PlayOptions& options, const PlayerPaths& paths, const EngineCatalog& catalog,
-                         std::string_view gpu_name);
+                         const GpuFacts& gpu);
 
 }  // namespace kirari::app::play

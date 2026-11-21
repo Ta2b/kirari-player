@@ -149,8 +149,11 @@ TEST_CASE("la mesure est refaite quand le pilote change", "[auto_bench]") {
 
 TEST_CASE("la lecture d'un essai : aller-retour et refus", "[auto_bench]") {
   kirari::app::play::FrenchUi french;
-  const BenchReading reading{
-      .gpu = "g", .driver = "7", .run = run(Tier::Quality, 10), .span_variant = "FP8 CUTLASS"};
+  const BenchReading reading{.gpu = "g",
+                             .driver = "7",
+                             .run = run(Tier::Quality, 10),
+                             .span_variant = "FP8 CUTLASS",
+                             .playback_elapsed_us = 6000500};
   const auto read = parse_reading(format_reading(reading));
   REQUIRE(read);
   CHECK(read->gpu == "g");
@@ -161,6 +164,7 @@ TEST_CASE("la lecture d'un essai : aller-retour et refus", "[auto_bench]") {
   CHECK(read->run.lag_p95_us == 3000);
   CHECK(read->run.period_us == 6060);
   CHECK(read->span_variant == "FP8 CUTLASS");
+  CHECK(read->playback_elapsed_us == 6000500);
   CHECK_FALSE(parse_reading("level = 12"));
   CHECK_FALSE(parse_reading("gpu = ["));
 }

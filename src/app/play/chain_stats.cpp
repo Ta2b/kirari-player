@@ -51,6 +51,17 @@ std::string_view auto_reason_label(core::AutoReason reason) {
 
 }  // namespace
 
+void log_playback_energy(const LateTelemetry& telemetry, std::int64_t frames) {
+  if (GpuTelemetry* const nvml = telemetry.get()) {
+    // Énergie de la lecture : le compteur NVML relu au début et à la fin, à l'instant même (B11-14).
+    const std::uint64_t energy_start_mj = telemetry.energy_start_mj();
+    const std::uint64_t energy_end_mj = nvml->energy_mj(host_now_us());
+    if (const auto per_frame = millijoules_per_frame(energy_start_mj, energy_end_mj, frames))
+      log_channel("app")->info("énergie : {:.1f} J, {:.1f} mJ par image neuve",
+                               static_cast<double>(energy_end_mj - energy_start_mj) / 1000.0, *per_frame);
+  }
+}
+
 std::vector<EngineBadge> engine_badges(const std::filesystem::path& cache_dir,
                                        std::span<const LoadedEngine> loaded_engines) {
   std::vector<EngineBadge> badges;

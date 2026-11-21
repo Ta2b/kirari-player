@@ -89,6 +89,31 @@ enum class OpKind : std::uint8_t {
   FakeQuantE4M3,
   // Paire Q/DQ INT8 à zéro nul, fusionnée de même : x → sature(arrondi(x / échelle)) × échelle (int8.h).
   FakeQuantInt8,
+  Abs,
+  ReduceSum,
+  ReduceL2,
+  CumSum,
+  ConstantOfShape,
+  Expand,
+  Equal,
+  Where,
+  Neg,
+  Sin,
+  Cos,
+  Erf,
+  Pow,
+  Greater,
+  GreaterEqual,
+  Less,
+  LogicalAnd,
+  LogicalNot,
+  ToBool,
+  Tile,
+  MatMul,
+  Softmax,
+  LayerNorm,
+  InstanceNorm,
+  ScatterND,
 };
 
 // La grille d'un arrondi de Conv (ConvAttrs::in_quant et out_quant).
@@ -240,6 +265,18 @@ struct GridSampleAttrs {
   bool grid_nchw = false;  // grille [N, 2, H, W] : le Transpose qui la rangeait en [N, H, W, 2], replié
 };
 
+struct FillAttrs {
+  Value scalar;
+};
+struct NormAttrs {
+  std::int64_t axis = -1;
+  float epsilon = 1e-5F;
+};
+struct ScanAttrs {
+  bool exclusive = false;
+  bool reverse = false;
+};
+
 struct ReduceAttrs {
   bool keepdims = true;
   bool noop_with_empty_axes = false;
@@ -253,9 +290,10 @@ struct PoolAttrs {
   bool count_include_pad = false;
 };
 
-using Attrs = std::variant<NoAttrs, ConvAttrs, ConvTransposeAttrs, LeakyReluAttrs, AxisAttrs, SplitAttrs,
-                           ReshapeAttrs, TransposeAttrs, ShapeAttrs, CastAttrs, ModAttrs, BlockAttrs,
-                           PadAttrs, ResizeAttrs, GridSampleAttrs, ReduceAttrs, PoolAttrs>;
+using Attrs =
+    std::variant<NoAttrs, ConvAttrs, ConvTransposeAttrs, LeakyReluAttrs, AxisAttrs, SplitAttrs, ReshapeAttrs,
+                 TransposeAttrs, ShapeAttrs, CastAttrs, ModAttrs, BlockAttrs, PadAttrs, ResizeAttrs,
+                 GridSampleAttrs, ReduceAttrs, PoolAttrs, FillAttrs, ScanAttrs, NormAttrs>;
 
 struct Node {
   std::string name;

@@ -1,0 +1,56 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "tensor.glsl"
+
+// Un canal par couche de la grille. La dernière couche cumule les poids en FP32.
+layout(local_size_x=16, local_size_y=16) in;
+layout(std430,binding=0) readonly buffer Source { KIRARI_TENSOR v[]; } src;
+layout(std430,binding=1) readonly buffer Motion { KIRARI_TENSOR v[]; } flow;
+layout(std430,binding=2) buffer Sums { uint v[]; } sums;
+layout(std430,binding=3) readonly buffer Instant { float s; } instant;
+layout(push_constant) uniform Push {
+  ivec2 size; ivec2 grid; uint channels; uint pull; float scale; float ox; float oy;
+} pc;
+
+float read_motion(uint c, ivec2 pos) {
+  return float(flow.v[c * pc.grid.x * pc.grid.y + pos.y * pc.grid.x + pos.x]);
+}
+float component(uint c, ivec2 a, ivec2 b, vec2 f) {
+  return mix(mix(read_motion(c,a),read_motion(c,ivec2(b.x,a.y)),f.x),
+             mix(read_motion(c,ivec2(a.x,b.y)),read_motion(c,b),f.x), f.y);
+}
+// La comparaison-échange garde le même format de sommes sur les appareils sans atomicAdd(float).
+void add_sum(uint pos, float delta) {
+  uint prev = atomicAdd(sums.v[pos],0u);
+  for (;;) {
+    uint want = floatBitsToUint(uintBitsToFloat(prev) + delta);
+    uint seen = atomicCompSwap(sums.v[pos],prev,want);
+    if (seen == prev) return;
+    prev = seen;
+  }
+}
+void main() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(p,pc.size))) return;
+  uint c=gl_GlobalInvocationID.z;
+  vec2 uv=clamp((vec2(p)+0.5)/pc.scale - 0.5 + vec2(pc.ox,pc.oy),vec2(0),vec2(pc.grid-1));
+  ivec2 a=ivec2(uv), b=min(a+1,pc.grid-1);
+  vec2 f=fract(uv);
+  vec2 motion=vec2(component(0,a,b,f),component(1,a,b,f))*pc.scale;
+  vec2 dest=vec2(p)+instant.s*motion;
+  if (!all(greaterThan(dest,vec2(-1))) || !all(lessThan(dest,vec2(pc.size)))) return;
+  ivec2 low=ivec2(floor(dest));
+  vec2 frac=fract(dest);
+  float z=component(2,a,b,f);
+  float weight=exp(instant.s*clamp(isnan(z)?-10.0:z,-10.0,10.0));
+  uint area=pc.size.x*pc.size.y;
+  uint channels=pc.pull!=0u?2u:pc.channels;
+  float value=1.0;
+  if(c<channels) value=pc.pull!=0u?motion[c]:float(src.v[c*area+p.y*pc.size.x+p.x]);
+  for(int j=0;j<2;++j) for(int i=0;i<2;++i) {
+    ivec2 q=low+ivec2(i,j);
+    if(any(lessThan(q,ivec2(0))) || any(greaterThanEqual(q,pc.size))) continue;
+    float share=(i==0?1.0-frac.x:frac.x)*(j==0?1.0-frac.y:frac.y);
+    if(share>0.0) add_sum(c*area+q.y*pc.size.x+q.x,value*weight*share);
+  }
+}

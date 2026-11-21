@@ -267,21 +267,8 @@ std::expected<ImportedAttrs, Refusal> plain(std::expected<T, Refusal> attrs) {
   return ImportedAttrs{.attrs = Attrs{std::move(*attrs)}};
 }
 
-}  // namespace
-
-std::expected<ImportedAttrs, Refusal> import_attrs(OpKind op, const onnx::Node& node, std::int64_t opset) {
-  const AttrReader r(node);
+std::expected<ImportedAttrs, Refusal> layout_attrs(const AttrReader& r, OpKind op, std::int64_t opset) {
   switch (op) {
-    case OpKind::Conv:
-    case OpKind::ConvTranspose:
-      return plain(conv_attrs(r, op));
-    case OpKind::AveragePool:
-      return plain(pool_attrs(r));
-    case OpKind::LeakyRelu: {
-      auto alpha = r.real("alpha", 0.01F);
-      if (!alpha) return std::unexpected(alpha.error());
-      return ImportedAttrs{.attrs = LeakyReluAttrs{.alpha = *alpha}};
-    }
     case OpKind::Concat:
       if (!r.has("axis")) return r.invalid("axis obligatoire");
       [[fallthrough]];
@@ -310,20 +297,53 @@ std::expected<ImportedAttrs, Refusal> import_attrs(OpKind op, const onnx::Node& 
     case OpKind::Unsqueeze:
     case OpKind::Squeeze:
       return with_moved(NoAttrs{}, r, "axes", opset < 13);
-    case OpKind::ReduceMean: {
-      auto keepdims = r.integer("keepdims", 1);
-      auto noop = r.integer("noop_with_empty_axes", 0);
-      if (!keepdims) return std::unexpected(keepdims.error());
-      if (!noop) return std::unexpected(noop.error());
-      return with_moved(ReduceAttrs{.keepdims = *keepdims != 0, .noop_with_empty_axes = *noop != 0}, r,
-                        "axes", opset < 18);
-    }
     case OpKind::Shape: {
       auto start = r.integer("start", 0);
       auto end = r.integer("end", ShapeAttrs{}.end);
       if (!start) return std::unexpected(start.error());
       if (!end) return std::unexpected(end.error());
       return ImportedAttrs{.attrs = ShapeAttrs{.start = *start, .end = *end}};
+    }
+    case OpKind::DepthToSpace:
+    case OpKind::SpaceToDepth:
+      return plain(block_attrs(r, op));
+    default:
+      return ImportedAttrs{.attrs = NoAttrs{}};
+  }
+}
+
+std::expected<ImportedAttrs, Refusal> value_attrs(const AttrReader& r, OpKind op, const onnx::Node& node,
+                                                  std::int64_t opset) {
+  switch (op) {
+    case OpKind::ScatterND: {
+      auto reduction = r.text("reduction", "none");
+      if (!reduction) return std::unexpected(reduction.error());
+      if (*reduction != "none") return r.unsupported("ScatterND avec réduction");
+      return ImportedAttrs{.attrs = NoAttrs{}};
+    }
+    case OpKind::ConstantOfShape: {
+      if (!r.has("value"))
+        return ImportedAttrs{.attrs = FillAttrs{Value{.type = DataType::F32, .dims = {1}, .f = {0}}}};
+      auto fill = constant_value(node);
+      if (!fill) return std::unexpected(fill.error());
+      if (value_size(*fill) != 1) return r.invalid("valeur de remplissage non scalaire");
+      return ImportedAttrs{.attrs = FillAttrs{std::move(*fill)}};
+    }
+    case OpKind::CumSum: {
+      auto exclusive = r.integer("exclusive", 0), reverse = r.integer("reverse", 0);
+      if (!exclusive) return std::unexpected(exclusive.error());
+      if (!reverse) return std::unexpected(reverse.error());
+      return ImportedAttrs{.attrs = ScanAttrs{*exclusive != 0, *reverse != 0}};
+    }
+    case OpKind::ReduceSum:
+    case OpKind::ReduceL2:
+    case OpKind::ReduceMean: {
+      auto keepdims = r.integer("keepdims", 1);
+      auto noop = r.integer("noop_with_empty_axes", 0);
+      if (!keepdims) return std::unexpected(keepdims.error());
+      if (!noop) return std::unexpected(noop.error());
+      return with_moved(ReduceAttrs{.keepdims = *keepdims != 0, .noop_with_empty_axes = *noop != 0}, r,
+                        "axes", opset < (op == OpKind::ReduceSum ? 13 : 18));
     }
     case OpKind::Cast: {
       if (!r.has("to")) return r.invalid("to obligatoire");
@@ -339,9 +359,37 @@ std::expected<ImportedAttrs, Refusal> import_attrs(OpKind op, const onnx::Node& 
       if (!fmod) return std::unexpected(fmod.error());
       return ImportedAttrs{.attrs = ModAttrs{.fmod = *fmod != 0}};
     }
-    case OpKind::DepthToSpace:
-    case OpKind::SpaceToDepth:
-      return plain(block_attrs(r, op));
+    default:
+      return layout_attrs(r, op, opset);
+  }
+}
+}  // namespace
+
+std::expected<ImportedAttrs, Refusal> import_attrs(OpKind op, const onnx::Node& node, std::int64_t opset) {
+  const AttrReader r(node);
+  switch (op) {
+    case OpKind::Conv:
+    case OpKind::ConvTranspose:
+      return plain(conv_attrs(r, op));
+    case OpKind::AveragePool:
+      return plain(pool_attrs(r));
+    case OpKind::LeakyRelu: {
+      auto alpha = r.real("alpha", 0.01F);
+      if (!alpha) return std::unexpected(alpha.error());
+      return ImportedAttrs{.attrs = LeakyReluAttrs{.alpha = *alpha}};
+    }
+    case OpKind::Softmax:
+    case OpKind::LayerNorm:
+    case OpKind::InstanceNorm: {
+      if (op == OpKind::Softmax && opset < 13) return r.unsupported("Softmax avant l’opset 13");
+      auto axis = r.integer("axis", -1);
+      auto epsilon = r.real("epsilon", 1e-5F);
+      auto stash = r.integer("stash_type", 1);
+      if (!axis) return std::unexpected(axis.error());
+      if (!epsilon) return std::unexpected(epsilon.error());
+      if (!stash || *stash != 1) return r.unsupported("normalisation aux sommes autres que FP32");
+      return ImportedAttrs{.attrs = NormAttrs{*axis, *epsilon}};
+    }
     case OpKind::Pad:
       return plain(
           choose<PadMode>(
@@ -353,7 +401,7 @@ std::expected<ImportedAttrs, Refusal> import_attrs(OpKind op, const onnx::Node& 
     case OpKind::GridSample:
       return plain(grid_sample_attrs(r, opset));
     default:
-      return ImportedAttrs{.attrs = NoAttrs{}};
+      return value_attrs(r, op, node, opset);
   }
 }
 

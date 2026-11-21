@@ -323,3 +323,57 @@ TEST_CASE("ReduceMean : axes, keepdims et noop_with_empty_axes", "[gpu_ir][ops][
   ModelBuilder noop(18);
   CHECK(run_node(noop, x, "ReduceMean", {"x"}, {attr_int("noop_with_empty_axes", 1)}).f == x.f);
 }
+
+TEST_CASE("TemporalFix : somme préfixe exclusive inversée et norme sur des axes négatifs", "[gpu_ir][ops]") {
+  const Value x = floats({2, 3}, {1, 2, 3, 3, 4, 0});
+  ModelBuilder scan(18);
+  scan.ints("axis", {-1});
+  CHECK(run_node(scan, x, "CumSum", {"x", "axis"}, {attr_int("exclusive", 1), attr_int("reverse", 1)}).f ==
+        std::vector<float>{5, 3, 0, 4, 0, 0});
+  ModelBuilder norm(18);
+  norm.ints("axes", {-1});
+  const auto y = run_node(norm, x, "ReduceL2", {"x", "axes"}, {attr_int("keepdims", 0)});
+  CHECK(y.dims == Dims{2});
+  CHECK(y.f == std::vector<float>{std::sqrt(14.0F), 5.0F});
+}
+
+TEST_CASE("GMFlow : matrices par lots diffusées et softmax stable", "[gpu_ir][ops]") {
+  ModelBuilder dot(18);
+  dot.weight("w", {2, 1}, {2, 3});
+  const auto product = run_node(dot, floats({2, 1, 2}, {1, 2, 3, 4}), "MatMul", {"x", "w"});
+  CHECK(product.dims == Dims{2, 1, 1});
+  CHECK(product.f == std::vector<float>{8, 18});
+  ModelBuilder sm(18);
+  const auto probability = run_node(sm, floats({1, 3}, {1000, 1000, 1000}), "Softmax", {"x"});
+  CHECK(probability.f == std::vector<float>{1.0F / 3, 1.0F / 3, 1.0F / 3});
+}
+
+TEST_CASE("ScatterND : remplacement de tranches dans le maillage RIFE v2", "[gpu_ir][scatter]") {
+  SECTION("un couple d'indices négatifs remplace le suffixe entier") {
+    ModelBuilder m;
+    m.initializer(tensor_i64("indices", {2, 2}, Dims{0, 1, -1, -2}))
+        .weight("updates", {2, 2}, {31, 32, 41, 42});
+    const auto out =
+        run_node(m, floats({2, 2, 2}, {0, 1, 2, 3, 4, 5, 6, 7}), "ScatterND", {"x", "indices", "updates"});
+    CHECK(out.dims == Dims{2, 2, 2});
+    CHECK(out.f == std::vector<float>{0, 1, 31, 32, 41, 42, 6, 7});
+  }
+  SECTION("la mise à jour scalaire conserve les entiers de forme") {
+    ModelBuilder m;
+    m.ints("indices", {-1}).initializer(tensor_i64("update", {}, Dims{11}));
+    CHECK(run_node(m, ints({2}, {7, 9}), "ScatterND", {"x", "indices", "update"}).i ==
+          std::vector<std::int64_t>{7, 11});
+  }
+  SECTION("une réduction ou un indice hors limites ne passent pas silencieusement") {
+    ModelBuilder reduction;
+    reduction.input("x", {2})
+        .ints("indices", {0})
+        .weight("update", {}, {1.0F})
+        .node("ScatterND", {"x", "indices", "update"}, {"y"}, {attr_string("reduction", "add")})
+        .output("y");
+    CHECK(refusal(reduction).code == RefusalCode::OnnxUnsupported);
+    ModelBuilder over;
+    over.ints("indices", {2}).weight("update", {}, {1.0F});
+    CHECK_FALSE(try_run(over, floats({2}, {0, 1}), "ScatterND", {"x", "indices", "update"}));
+  }
+}

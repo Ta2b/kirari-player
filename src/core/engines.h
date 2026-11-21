@@ -40,6 +40,11 @@ enum class EngineId : std::uint8_t {
   Vulkan,
   TensorRt,
   Metal,
+  Zml,
+  Hip,
+  Slang,
+  Triton,
+  Cuda,
 };
 
 enum class Delivery : std::uint8_t {

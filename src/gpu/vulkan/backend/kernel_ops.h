@@ -61,11 +61,18 @@ enum class OpCode : std::uint64_t {
   ReadRing = 52,
   Deband = 53,
   TensorPeak = 54,
+  GmfssFrames,
+  GmfssSplat,
+  GmfssTime,
+  ExternalOwnership,
+  DrbaThirdImage,
 };
-constexpr std::array kOpCodes{OpCode::Resample,  OpCode::RifeCrop,    OpCode::Warp,         OpCode::Ingest,
-                              OpCode::RifeInput, OpCode::ScoresStart, OpCode::FlowMaxStart, OpCode::RifeTime,
-                              OpCode::RifePair,  OpCode::WriteRing,   OpCode::FrameStats,   OpCode::ReadRing,
-                              OpCode::Deband,    OpCode::TensorPeak};
+constexpr std::array kOpCodes{
+    OpCode::Resample,  OpCode::RifeCrop,          OpCode::Warp,          OpCode::Ingest,
+    OpCode::RifeInput, OpCode::ScoresStart,       OpCode::FlowMaxStart,  OpCode::RifeTime,
+    OpCode::RifePair,  OpCode::WriteRing,         OpCode::FrameStats,    OpCode::ReadRing,
+    OpCode::Deband,    OpCode::TensorPeak,        OpCode::GmfssFrames,   OpCode::GmfssSplat,
+    OpCode::GmfssTime, OpCode::ExternalOwnership, OpCode::DrbaThirdImage};
 static_assert(
     [] {
       for (std::size_t i = 0; i < kOpCodes.size(); ++i)
@@ -94,6 +101,7 @@ struct OpKey {
   }
 };
 
+struct HostViews;
 class VulkanKernelOps final : public KernelOps {
  public:
   static constexpr std::size_t kMaxRecordings = 64;
@@ -136,8 +144,12 @@ class VulkanKernelOps final : public KernelOps {
   // float, atomicMax), sans remise à zéro.
   std::expected<void, Refusal> tensor_peaks(std::span<const Tensor> tensors, const kernels::Window& area,
                                             const BufferView& result);
+  std::expected<void, Refusal> gmfss_frames(const Tensor& a, const Tensor& b, const Tensor& frames) override;
+  std::expected<void, Refusal> soft_splat_fill(std::span<const SplatJob> jobs, const Tensor& time,
+                                               float t) override;
   std::expected<void, Refusal> rife_input(const Tensor& a, const Tensor& b, float t,
                                           const Tensor& input) override;
+  Done write_drba_third_image(const Tensor& image, const Tensor& pair12);
   std::expected<void, Refusal> rife_time(const Tensor& input, float t) override;
   std::expected<void, Refusal> rife_pair(const Tensor& a, const Tensor& b, float t,
                                          const Tensor& input) override;
@@ -162,6 +174,9 @@ class VulkanKernelOps final : public KernelOps {
   // A45-14 : la mémoire de la carte pour les statistiques, lue du budget du pilote.
   std::optional<DeviceMemory> device_memory() override;
 
+  // Les poignées et le sens fixent la barrière. Les valeurs de timeline sont propres à chaque soumission.
+  Done transfer_ownership(std::span<const VkBuffer> buffers, bool release,
+                          std::span<const TimelinePoint> external = {});
   std::size_t recordings() const { return recordings_.size(); }
   std::size_t retained_frames() const { return retained_.size(); }
   std::size_t uploads_pending() const;   // copies d'images hôte en file ou en cours sur le fil d'envoi
@@ -172,6 +187,7 @@ class VulkanKernelOps final : public KernelOps {
   }  // tampons de travail de l'ingestion
 
  private:
+  Done soft_splat(const SplatJob& job);
   struct Cached {
     OpKey key;
     std::unique_ptr<Recording> recording;
@@ -319,6 +335,7 @@ class VulkanKernelOps final : public KernelOps {
   MemoryAllocator& memory_;
   PipelineCache& pipelines_;
   BackendQueue& queue_;
+  ScratchShare splat_scratch_;
   KernelRunner runner_;
   std::unique_ptr<StageClock> clock_;  // nullptr : file sans horodatage
   // Tampons de travail des enregistrements d'ingestion, un jeu par forme : chaque image du lot du décodeur

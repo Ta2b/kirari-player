@@ -25,6 +25,7 @@ KIRARI_IR_OP(average_pool);
 // op_shape.cpp
 KIRARI_IR_OP(shape);
 KIRARI_IR_OP(gather);
+KIRARI_IR_OP(scatter_nd);
 KIRARI_IR_OP(reshape);  // Reshape, Unsqueeze, Squeeze
 KIRARI_IR_OP(transpose);
 KIRARI_IR_OP(range);
@@ -43,6 +44,15 @@ KIRARI_IR_OP(reduce_mean);
 // op_sample.cpp
 KIRARI_IR_OP(resize);
 KIRARI_IR_OP(grid_sample);
+
+KIRARI_IR_OP(fill);
+KIRARI_IR_OP(expand);
+KIRARI_IR_OP(where);
+KIRARI_IR_OP(scan);
+
+KIRARI_IR_OP(tile);
+KIRARI_IR_OP(matmul);
+KIRARI_IR_OP(norm);
 
 #undef KIRARI_IR_OP
 

@@ -13,6 +13,7 @@
 #include "app/play/i18n.h"
 #include "app/play/span_int8.h"
 #include "core/file_sync.h"
+#include "gpu/cuda_mode.h"
 #include "gpu/span_fp8/hard_cases.h"
 #include "gpu/span_fp8/onnx_weights.h"
 #include "gpu/span_fp8/package.h"
@@ -465,12 +466,14 @@ SpanPrepare make_span_prepare(const std::shared_ptr<BackendLibrary>& library, co
     plan.during_playback = during_playback;
     plan.work_width = work.width;
     plan.work_height = work.height;
-    plan.fp16_engine = [&](int width, int height,
-                           gpu::Progress& building) -> std::expected<gpu::Artifact, Refusal> {
-      auto backend = BackendLibrary::create(library, init);
-      if (!backend) return std::unexpected(std::move(backend.error()));
-      return build_span_fp16(**backend, model, width, height, building);
-    };
+    if ((init.trials & gpu::kCudaNativeInference) == 0) {
+      plan.fp16_engine = [&](int width, int height,
+                             gpu::Progress& building) -> std::expected<gpu::Artifact, Refusal> {
+        auto backend = BackendLibrary::create(library, init);
+        if (!backend) return std::unexpected(std::move(backend.error()));
+        return build_span_fp16(**backend, model, width, height, building);
+      };
+    }
     const SpanStillsSource stills = [&](const std::stop_token& token,
                                         const std::function<void(float)>& report) {
       const media::StillsSpec spec{.max_width = gpu::span_fp8::kCropMaxWidth,

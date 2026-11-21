@@ -2,7 +2,7 @@
 
 Le lecteur crée des images entre deux images de la source, pour suivre la fréquence de l'écran. Le réseau
 qui les calcule s'appelle ici le « moteur du mouvement » (`MotionEngine`, `src/app/play/settings.h`). Le moteur
-de calcul qui l'exécute (TensorRT, Vulkan, Core ML) est un autre choix : voir `docs/moteurs.md`.
+de calcul qui l'exécute (TensorRT, Vulkan, ZML, Core ML) est un autre choix décrit dans `docs/moteurs.md`.
 
 ## Moteurs du mouvement
 
@@ -533,9 +533,9 @@ novembre 2026.
 sur la 4070 Ti : la paire en 3 minutes ; la fusion à 640x384 en 218 s au lieu de 692 s, et 6 % plus rapide ; à
 960x576 (travail 1080p), le pavage faisait planter Myelin et la construction dépassait le délai.
 
-**TensorRT seulement** (`BackendCaps::gmfss`) : le compilateur de Vulkan n'a ni MatMul ni Softmax. Sans les
-deux graphes ou sans TensorRT, le niveau n'est pas proposé, et un `play.toml` qui le demande garde RIFE (raison
-au journal). Les poids d'union sont MIT ; ils ne sont pas livrés sans l'accord de Tatoub. Un `play.toml` qui
+**Moteurs compatibles**. TensorRT et ZML déclarent `BackendCaps::gmfss`. ZML compile les réseaux de paire
+et de fusion avec PJRT. Le lecteur garde RIFE et consigne la raison si le moteur ne gère pas GMFSS ou si les
+deux graphes manquent. Les poids d'union sont MIT ; ils ne sont pas livrés sans l'accord de Tatoub. Un `play.toml` qui
 nomme `gmfss` le garde avec le natif (le défaut) et se lit en RIFE 4.25 sous `--no-gmfss-native` ;
 `gmfss_fused`, `gmfss_quality` et `gmfss_precision` restent ignorés. Les temps mesurés sur la RTX 4070 Ti sont
 dans [`gmfss-natif.md`](gmfss-natif.md) (banc : `tools/gmfss/banc_temps.sh`).

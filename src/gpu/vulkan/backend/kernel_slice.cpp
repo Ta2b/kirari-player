@@ -35,20 +35,21 @@ std::unexpected<Refusal> refuse_slice(RefusalCode code, std::string text) {
 
 // L'écart de chaque bloc comme rgb_pair_diff.comp le prend pour le pire (moyenne × pas × 256), puis la zone
 // qui bouge au seuil des dessins tenus (P6.6, P6.18).
-core::MovingArea moving_of(std::span<const float> sums, std::uint32_t width, std::uint32_t height,
-                           float levels) {
+void read_blocks(PairScores& scores, std::span<const float> sums, std::uint32_t width, std::uint32_t height,
+                 float levels) {
   constexpr auto kBlock = static_cast<std::uint32_t>(kernels::kHeldBlock);
   const std::uint32_t bx = (width + kBlock - 1) / kBlock;
-  if (bx == 0) return {};
-  std::vector<std::uint32_t> deviation(sums.size());
+  if (bx == 0) return;
+  scores.blocks_x = bx;
+  scores.blocks.resize(sums.size());
   for (std::size_t i = 0; i < sums.size(); ++i) {
     const auto x = static_cast<std::uint32_t>(i % bx) * kBlock;
     const auto y = static_cast<std::uint32_t>(i / bx) * kBlock;
     const float pixels =
         static_cast<float>((std::min(x + kBlock, width) - x) * (std::min(y + kBlock, height) - y));
-    deviation[i] = static_cast<std::uint32_t>(sums[i] / pixels * levels * 256.0F);
+    scores.blocks[i] = static_cast<std::uint32_t>(sums[i] / pixels * levels * 256.0F);
   }
-  return core::moving_area(deviation, bx, core::moving_limit(kernels::kHeldThreshold));
+  scores.moving = core::moving_area(scores.blocks, bx, core::moving_limit(kernels::kHeldThreshold));
 }
 
 }  // namespace
@@ -118,6 +119,21 @@ std::expected<void, Refusal> VulkanKernelOps::rife_input(const Tensor& a, const 
   });
   if (!rec) return std::unexpected(rec.error());
   return submit("entrée de RIFE", **rec);
+}
+
+Done VulkanKernelOps::write_drba_third_image(const Tensor& image, const Tensor& pair12) {
+  auto src = tensor_view(image, 3, "DistilDRBA : troisième image");
+  if (!src) return std::unexpected(src.error());
+  auto dst = tensor_view(pair12, 7, "DistilDRBA : entrée pair12");
+  if (!dst) return std::unexpected(dst.error());
+  OpKey key;
+  key.add(OpCode::DrbaThirdImage);
+  add_view(key, *src);
+  add_view(key, *dst);
+  auto rec =
+      recording(key, [&](Recorder& r) { return runner_.drba_third_image(r, *src, *dst, kStudioBlack); });
+  if (!rec) return std::unexpected(rec.error());
+  return submit("entrée de DistilDRBA · troisième image", **rec);
 }
 
 std::expected<void, Refusal> VulkanKernelOps::rife_pair(const Tensor& a, const Tensor& b, float t,
@@ -240,10 +256,9 @@ std::expected<PairScores, Refusal> VulkanKernelOps::pair_read(const PairRead& sl
   std::memcpy(&worst_block, slot.worst->mapped(), sizeof(worst_block));
   // Σ |ΔY| × (pas 8 bits / 255) sur l'aire remplie de RIFE (kernels::pair_scene_score).
   const double scene = kernels::pair_scene_score(total, slot.levels, slot.area);
-  return PairScores{.scene_score = scene,
-                    .worst_block = worst_block,
-                    .identical = total == 0.0,
-                    .moving = moving_of(partials, slot.width, slot.height, slot.levels)};
+  PairScores scores{.scene_score = scene, .worst_block = worst_block, .identical = total == 0.0};
+  read_blocks(scores, partials, slot.width, slot.height, slot.levels);
+  return scores;
 }
 
 std::expected<float, Refusal> VulkanKernelOps::flow_max_now(const Motion& motion) {

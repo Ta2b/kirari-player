@@ -150,7 +150,9 @@ void downloadable_row(EngineRow& row, const EnginesHere& here) {
 // Les préférés qui découlent des moteurs choisis : le plus rapide pour les réseaux.
 void prefer_chosen(core::Settings& settings) {
   core::EngineId networks = core::EngineId::Vulkan;
-  for (const core::EngineId id : {core::EngineId::Metal, core::EngineId::TensorRt}) {
+  for (const core::EngineId id :
+       {core::EngineId::Zml, core::EngineId::Slang, core::EngineId::Triton, core::EngineId::Hip,
+        core::EngineId::Metal, core::EngineId::TensorRt, core::EngineId::Cuda}) {
     if (chosen(settings, id)) networks = id;
   }
   const auto usage = [](core::Usage u) { return static_cast<std::size_t>(u); };
@@ -170,7 +172,9 @@ std::vector<std::filesystem::path> backends_within(std::span<const std::filesyst
   std::vector<std::filesystem::path> out;
   for (const std::filesystem::path& path : candidates) {
     const std::optional<core::EngineId> id = engine_of_library(path);
-    if (!id || *id == core::EngineId::Vulkan || chosen(engines, *id)) out.push_back(path);
+    if (!id || *id == core::EngineId::Vulkan || chosen(engines, *id) ||
+        (*id == core::EngineId::TensorRt && chosen(engines, core::EngineId::Cuda)))
+      out.push_back(path);
   }
   return out;
 }
@@ -251,11 +255,34 @@ std::string tensorrt_driver_problem(const GpuFacts& gpu) {
                          kTensorRtDriverMinimum.second);
 }
 
+namespace {
+
+std::vector<core::EngineOffer> engine_offers(const GpuFacts& gpu, const EnginesHere& here) {
+  auto offers = core::recommend_engines(system_of(gpu, here.os));
+  const auto add_bundled = [&](core::EngineId id) {
+    offers.push_back({.id = id,
+                      .delivery = core::Delivery::Bundled,
+                      .reason = core::Reason::CompareWithVulkan,
+                      .relevant = true});
+  };
+  if (here.tensorrt && gpu.vendor == GpuVendor::Nvidia) add_bundled(core::EngineId::Cuda);
+  if (here.zml) add_bundled(core::EngineId::Zml);
+  for (const core::EngineId id : here.experimental) add_bundled(id);
+  return offers;
+}
+
+}  // namespace
+
 FirstRunView first_run_view(const GpuFacts& gpu, const EnginesHere& here, const core::Settings& current) {
   FirstRunView view{.gpu = gpu_line(gpu)};
-  for (const core::EngineOffer& offer : core::recommend_engines(system_of(gpu, here.os))) {
+  for (const core::EngineOffer& offer : engine_offers(gpu, here)) {
     EngineRow row{.offer = offer};
     switch (offer.id) {
+      case core::EngineId::Cuda:
+      case core::EngineId::Hip:
+      case core::EngineId::Slang:
+      case core::EngineId::Triton:
+      case core::EngineId::Zml:
       case core::EngineId::Vulkan:
         row.usable = true;
         row.status = i18n::tr("bundled with the player");
@@ -263,7 +290,7 @@ FirstRunView first_run_view(const GpuFacts& gpu, const EnginesHere& here, const 
       case core::EngineId::TensorRt:
         downloadable_row(row, here);
         // P3.6 : le pilote se lit avant 650 Mo de téléchargement ; trop ancien, la case reste verrouillée.
-        if (offer.id == core::EngineId::TensorRt && row.download) {
+        if (row.download) {
           if (std::string problem = tensorrt_driver_problem(gpu); !problem.empty()) {
             row.usable = false;
             row.download = false;
@@ -327,9 +354,10 @@ core::Settings without_engine(core::Settings settings, core::EngineId id) {
 
 PlaySettings within_engines(PlaySettings settings, const core::Settings& engines,
                             std::vector<std::string>& notes) {
-  const bool inference =
-      std::ranges::any_of(std::array{core::EngineId::TensorRt, core::EngineId::Vulkan, core::EngineId::Metal},
-                          [&](core::EngineId id) { return chosen(engines, id); });
+  const bool inference = std::ranges::any_of(
+      std::array{core::EngineId::TensorRt, core::EngineId::Vulkan, core::EngineId::Metal, core::EngineId::Zml,
+                 core::EngineId::Hip, core::EngineId::Slang, core::EngineId::Triton, core::EngineId::Cuda},
+      [&](core::EngineId id) { return chosen(engines, id); });
   // Anime4K ne demande aucun moteur de réseau (anime4k_choice.h) : son agrandissement reste.
   const bool shaders = anime4k_size(settings.model).has_value();
   if (!inference && ((settings.upscale && !shaders) || settings.rife_factor >= 2)) {
@@ -354,6 +382,16 @@ std::string_view engine_label(core::EngineId id) {
       return "Vulkan";
     case core::EngineId::TensorRt:
       return "TensorRT";
+    case core::EngineId::Cuda:
+      return "CUDA natif";
+    case core::EngineId::Zml:
+      return "ZML";
+    case core::EngineId::Hip:
+      return "HIP (HIPIFY)";
+    case core::EngineId::Slang:
+      return "Slang";
+    case core::EngineId::Triton:
+      return "Triton";
     case core::EngineId::Metal:
       return "Core ML (Apple)";
   }

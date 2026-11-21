@@ -7,13 +7,13 @@ dernier bloc lorsque les contrôles de rendu, de réemploi ou de durée échouen
 
 ## Voie CUDA directe
 
-Le réglage facultatif « Interpolation CUDA directe (essai) » charge directement les poids officiels
+Le moteur **CUDA natif** charge directement les poids officiels
 Équilibre du modèle en 1920 × 1088, avec les trois blocs et l'encodeur en CUDA. En lecture 1080p,
 cette forme s'obtient avec l'estimation du mouvement en pleine taille. Le backend vérifie les
 empreintes des quatre morceaux ONNX et la géométrie. Il ne construit ni ne compare de plan TensorRT
 pour DistilDRBA. Le module NVIDIA garde sa dépendance au runtime TensorRT pour les voies mixtes.
-Un refus de forme remonte au lecteur, qui peut poursuivre à la cadence source. Pour retrouver la
-voie mixte sur d'autres tailles, décocher l'essai.
+Pour les autres tailles ou précisions, le lecteur essaie DistilDRBA sous TensorRT. Si ce plan
+échoue aussi, le lecteur indique le refus et poursuit à la cadence source.
 
 Sur deux trios réels et deux instants, le CUDA direct donne 78,85–81,56 dB RGB face à ONNX Runtime
 CPU, avec un écart maximum de 0,005371. L'écart maximal de flot vaut 0,125 pixel. Le réemploi du

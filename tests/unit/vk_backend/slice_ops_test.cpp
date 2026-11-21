@@ -352,6 +352,10 @@ TEST_CASE("KernelOps : mesures d'une paire RGB rendues tout de suite", "[vk_back
   REQUIRE(got);
   // La définition de rife_kernels.cu, en double : luma BT.709 du RGB, blocs 16 × 16 tronqués.
   constexpr int kBlock = 16;
+  constexpr std::size_t cols = (w + kBlock - 1) / kBlock;
+  constexpr std::size_t rows = (h + kBlock - 1) / kBlock;
+  REQUIRE(got->blocks_x == cols);
+  REQUIRE(got->blocks.size() == rows * cols);
   double total = 0.0;
   std::uint32_t worst = 0;
   for (int by = 0; by < h; by += kBlock) {
@@ -369,7 +373,10 @@ TEST_CASE("KernelOps : mesures d'une paire RGB rendues tout de suite", "[vk_back
         }
       }
       total += block;
-      worst = std::max(worst, static_cast<std::uint32_t>(block / ((x1 - bx) * (y1 - by)) * 219.0 * 256.0));
+      const auto expected = static_cast<std::uint32_t>(block / ((x1 - bx) * (y1 - by)) * 219.0 * 256.0);
+      const auto i = static_cast<std::size_t>(by / kBlock) * cols + static_cast<std::size_t>(bx / kBlock);
+      CHECK(std::abs(static_cast<int>(got->blocks[i]) - static_cast<int>(expected)) <= 1);
+      worst = std::max(worst, expected);
     }
   }
   const k::RifeGeometry g = k::rife_geometry(w, h);
@@ -391,6 +398,8 @@ TEST_CASE("KernelOps : mesures d'une paire RGB rendues tout de suite", "[vk_back
   REQUIRE(earlier);
   CHECK(earlier->scene_score == got->scene_score);
   CHECK(earlier->worst_block == got->worst_block);
+  CHECK(earlier->blocks == got->blocks);
+  CHECK(earlier->blocks_x == got->blocks_x);
   CHECK_FALSE(ops.scores_take(*first));
   // Un ticket dépassé par kPendingReadbacks lancements est périmé.
   const auto old = ops.scores_start(ta->tensor(), tb->tensor());

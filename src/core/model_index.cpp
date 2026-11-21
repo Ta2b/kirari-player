@@ -18,10 +18,15 @@ namespace {
 
 // --- Index. ---
 
-constexpr std::array<std::pair<std::string_view, EngineId>, 3> kEngineNames{{
+constexpr std::array<std::pair<std::string_view, EngineId>, 8> kEngineNames{{
     {"vulkan", EngineId::Vulkan},
     {"tensorrt", EngineId::TensorRt},
+    {"cuda", EngineId::Cuda},
     {"metal", EngineId::Metal},
+    {"zml", EngineId::Zml},
+    {"hip", EngineId::Hip},
+    {"slang", EngineId::Slang},
+    {"triton", EngineId::Triton},
 }};
 // Les moteurs retirés (engines.h), et les SDK de RTX HDR, retiré : un ancien fichier les nomme encore.
 constexpr std::array<std::string_view, 5> kRetiredEngines{"migraphx", "openvino", "directml", "rtx_video_sdk",

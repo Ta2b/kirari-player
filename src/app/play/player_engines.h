@@ -225,6 +225,7 @@ constexpr prepare::RifeFusedOutput rife_fused_output(bool motion, bool cubic_war
 // le moteur rendu est le fusionné.
 struct DrbaFusedUse {
   bool used = false;
+  bool cuda_direct = false;
   std::string declined;
   std::optional<RefusalCode> refused;  // le fusionné a été essayé et refusé : le code de ce refus (A03-21)
 };

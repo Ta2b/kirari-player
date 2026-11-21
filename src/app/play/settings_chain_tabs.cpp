@@ -63,12 +63,13 @@ void stability_section(PlaySettings& d, const SettingsChoices& choices) {
                "flickering grain) by comparing each frame with the three before and the three after. "
                "Upscaling and interpolation then work on a steady picture. Stronger also smooths very "
                "small movements. Speed: about half the cost of upscaling, as it works at half size and "
-               "keeps the full detail. TensorRT only for now. Recommended: Off, or Normal on an RTX "
+               "keeps the full detail. Works with TensorRT and ZML. Recommended: Off, or Normal on an RTX "
                "card."),
       panel::Apply::Reload);
   if (d.temporal_fix != TemporalFix::Off && choices.engine_in_use &&
-      *choices.engine_in_use != core::EngineId::TensorRt)
-    note(i18n::tr("Temporal stabilization runs on TensorRT only for now: this engine plays without it."));
+      *choices.engine_in_use != core::EngineId::Cuda && *choices.engine_in_use != core::EngineId::TensorRt &&
+      *choices.engine_in_use != core::EngineId::Zml)
+    note(i18n::tr("Temporal stabilization requires TensorRT or ZML."));
 }
 
 }  // namespace
@@ -207,7 +208,7 @@ void upscale_advanced(PlaySettings& d, const SettingsChoices& choices) {
                       "also steadies the finest grain and lines, for about four times the cost (about twice "
                       "upscaling). Recommended: off, except on a high-end RTX card with interpolation low."),
              panel::Apply::Reload);
-  if (choices.tensor_cores) {
+  if (choices.tensor_cores && choices.engine_in_use == core::EngineId::Cuda) {
     ImGui::Checkbox(i18n::tr("Sharp1 Performance Winograd (test)"), &d.experimental.sharp1_winograd);
     panel::tip(i18n::tr("Sharp1 Performance Winograd (test)"),
                i18n::tr("Tries selective Winograd for the verified Sharp1 Performance FP16 model at 1080p. "

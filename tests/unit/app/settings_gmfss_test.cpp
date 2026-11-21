@@ -17,11 +17,26 @@
 #include "app/play/gmfss_model.h"
 #include "app/play/interp_retired.h"
 #include "app/play/model_choice.h"
+#include "app/play/options.h"
 #include "app/play/player.h"
 #include "app/play/settings.h"
 #include "prepare/onnx_build.h"
 
 namespace kirari::app::play {
+
+TEST_CASE("Le choix GMFSS en ligne de commande s'applique à chaque instant de cette lecture",
+          "[app][settings][gmfss]") {
+  const PlaySettings rife_file;
+  const std::array<std::string_view, 2> gmfss{"film.mkv", "--motion=gmfss"};
+  const auto union_only = parse_play_options(gmfss);
+  REQUIRE(union_only);
+  const PlaySettings only = settings_for(rife_file, *union_only);
+  CHECK(only.motion_engine == MotionEngine::Gmfss);
+  CHECK(only.gmfss_every_instant);
+  const PlaySettings restored = settings_to_save(only, rife_file, only, *union_only);
+  CHECK(restored.motion_engine == MotionEngine::Rife);
+  CHECK_FALSE(restored.gmfss_every_instant);
+}
 
 TEST_CASE("GMFSS 540p attend Appliquer sans disparaître lors d'un changement de volume", "[app][gmfss]") {
   const PlaySettings seen;

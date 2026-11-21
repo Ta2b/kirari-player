@@ -83,7 +83,9 @@ struct EnginesHere {
   // Le système dont l'écran propose les moteurs : celui de l'hôte, ou celui qu'un test vérifie.
   core::Os os = core::kHostOs;
   bool tensorrt = false;  // backend kirari_backend_tensorrt trouvé
-  bool coreml = false;    // kirari_backend_coreml (Mac : le moteur Metal de l'écran)
+  bool zml = false;
+  std::vector<core::EngineId> experimental;
+  bool coreml = false;  // kirari_backend_coreml (Mac : le moteur Metal de l'écran)
   std::vector<EngineDownload> downloads;
 };
 

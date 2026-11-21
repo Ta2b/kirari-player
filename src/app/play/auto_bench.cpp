@@ -149,6 +149,7 @@ std::string format_reading(const BenchReading& reading) {
   root.insert("span_variant", reading.span_variant);
   root.insert("engine", reading.engine);
   root.insert("new_frames", reading.new_frames);
+  root.insert("playback_elapsed_us", reading.playback_elapsed_us);
   root.insert("uninterpolated", reading.uninterpolated);
   if (!reading.gpu_stages.empty()) {
     toml::array stages;
@@ -193,6 +194,8 @@ std::expected<BenchReading, Refusal> parse_reading(std::string_view text) {
   reading.span_variant = root["span_variant"].value_or(std::string());
   reading.engine = root["engine"].value_or(std::string());
   reading.new_frames = std::max<std::int64_t>(root["new_frames"].value_or(std::int64_t{0}), 0);
+  reading.playback_elapsed_us =
+      std::max<std::int64_t>(root["playback_elapsed_us"].value_or(std::int64_t{0}), 0);
   reading.uninterpolated = std::max<std::int64_t>(root["uninterpolated"].value_or(std::int64_t{0}), 0);
   if (const toml::array* stages = root["gpu_stage"].as_array()) {
     for (const toml::node& node : *stages) {

@@ -122,10 +122,11 @@ std::expected<void, Refusal> resize_nets(SpanFp8Weights& weights, bool acc16, bo
 
 // Le moteur SPAN FP16 de TensorRT lu, sa forme vérifiée (une entrée width × height, une sortie), et la sortie
 // ×2 allouée dans scratch.output_trt.
-std::expected<std::unique_ptr<TrtEngine>, Refusal> load_fp16(nvinfer1::IRuntime& runtime,
-                                                             const std::filesystem::path& path, int width,
-                                                             int height, Scratch& scratch) {
-  auto loaded = TrtEngine::load(runtime, path);
+std::expected<std::unique_ptr<TrtEngine>, Refusal> load_fp16(
+    std::expected<nvinfer1::IRuntime*, Refusal> runtime, const std::filesystem::path& path, int width,
+    int height, Scratch& scratch) {
+  if (!runtime) return std::unexpected(std::move(runtime.error()));
+  auto loaded = TrtEngine::load(**runtime, path);
   if (!loaded) return std::unexpected(std::move(loaded.error()));
   std::unique_ptr<TrtEngine> trt = std::move(*loaded);
   const Shape expected{.dims = {1, 3, height, width}};
@@ -368,7 +369,7 @@ std::expected<SpanFp8Derivation, Refusal> TensorRtBackend::derive_span_fp8(const
   // Le SPAN FP16 de TensorRT, avec sa mémoire propre (aucune zone de voie) : la sortie de la même taille.
   std::unique_ptr<TrtEngine> trt;
   if (request.fp16) {
-    auto loaded = load_fp16(*runtime_, request.fp16->path, timing_width, timing_height, scratch);
+    auto loaded = load_fp16(ensure_tensorrt(), request.fp16->path, timing_width, timing_height, scratch);
     if (!loaded) return std::unexpected(std::move(loaded.error()));
     trt = std::move(*loaded);
   }

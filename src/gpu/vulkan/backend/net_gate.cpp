@@ -81,6 +81,8 @@ float drawing(Place at) {
   return line ? 0.04F : std::min(1.0F, (0.9F * level) + shade);
 }
 
+}  // namespace
+
 // La valeur de l'entrée à cet élément. 7 ou 11 plans : l'entrée d'un réseau d'interpolation, deux images dont
 // la seconde a glissé de deux pixels, l'instant, puis la grille du v1 (kernels/spec/rife.h) ; sans elle, les
 // warps du réseau liraient n'importe où et la moindre erreur d'arrondi déplacerait toute la sortie.
@@ -106,6 +108,8 @@ float gate_value(const ir::Dims& dims, std::uint64_t index) {
       return kernels::rife_mesh_step(static_cast<int>(h));
   }
 }
+
+namespace {
 
 // L'entrée de la porte dans le type du tenseur, arrondie au float16 : le réseau en float16 et son jumeau en
 // float lisent les mêmes valeurs. Hors [N, C, H, W] : le motif de tuning_input ramené à [0, 1].

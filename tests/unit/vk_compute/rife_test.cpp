@@ -95,6 +95,45 @@ TEST_CASE("RIFE : instant suivant, le plan de l'instant seul réécrit", "[vk_co
   if (rig.context->caps().enabled.storage_buffer_16bit) check_time(rig, Precision::F16);
 }
 
+TEST_CASE("DistilDRBA : seuls trois plans de pair12 sont remplis, pixels et bords au bit près",
+          "[vk_compute][rife][drba_pair12]") {
+  Rig rig = make_rig();
+  require_f16(rig);
+  for (const auto size : {std::array{65, 35}, std::array{128, 64}}) {
+    CAPTURE(size[0], size[1]);
+    const auto g = k::rife_geometry(size[0], size[1]);
+    auto image = upload_rgb(rig, synthetic_rgb(size[0], size[1], 29), Precision::F16);
+    // Les ordres de grandeur du RGB décodé ainsi que ±0, les sous-normaux et les extrêmes finis.
+    constexpr std::array<std::uint16_t, 10> bits{0x0000, 0x8000, 0x0001, 0x8001, 0x03ff,
+                                                 0x0400, 0x3c00, 0xbc00, 0x7bff, 0xfbff};
+    write_bytes(rig, image.buffer, std::as_bytes(std::span(bits)));
+    auto other = upload_rgb(rig, synthetic_rgb(size[0], size[1], 19), Precision::F16);
+    auto full = tensor_target(rig, u32(g.padded_width), u32(g.padded_height), 7, Precision::F16);
+    auto part = tensor_target(rig, u32(g.padded_width), u32(g.padded_height), 7, Precision::F16);
+    auto both = record(rig, [&](Recorder& r) -> Done {
+      if (auto ok = rig.kernels().rife_frames(r, other.view, image.view, full.view, 0.0F, 7); !ok) return ok;
+      return rig.kernels().rife_constants(r, full.view, 0.25F);
+    });
+    auto third = record(
+        rig, [&](Recorder& r) { return rig.kernels().drba_third_image(r, image.view, part.view, 0.0F); });
+    REQUIRE(both->dispatches() == 2);
+    REQUIRE(third->dispatches() == 1);
+    run(rig, *both);
+    run(rig, *third);
+    const auto rgb_bytes =
+        static_cast<std::size_t>(tensor_bytes(full.view.width, full.view.height, 3, Precision::F16));
+    const auto bytes = static_cast<std::size_t>(full.view.buffer.size);
+    const auto want = read_bytes(rig, full.buffer, bytes);
+    const auto got = read_bytes(rig, part.buffer, bytes);
+    const auto data = std::span(got);
+    CHECK(std::ranges::equal(data.subspan(rgb_bytes, rgb_bytes),
+                             std::span(want).subspan(rgb_bytes, rgb_bytes)));
+    const auto untouched = [](std::byte b) { return b == std::byte{0x7F}; };
+    CHECK(std::ranges::all_of(data.first(rgb_bytes), untouched));
+    CHECK(std::ranges::all_of(data.subspan(2 * rgb_bytes), untouched));
+  }
+}
+
 TEST_CASE("RIFE : remplissage mod-64 centré, bords noir studio, exact", "[vk_compute][rife]") {
   Rig rig = make_rig();
   for (const k::Format f : kFormats) {

@@ -44,6 +44,7 @@ extern "C" {
 #include "core/clock.h"
 #include "core/log.h"
 #include "export/export_writer.h"
+#include "gpu/cuda_mode.h"
 #include "media/track.h"
 #include "prepare/utf8.h"
 #include "render/grade_params.h"
@@ -328,7 +329,7 @@ ExportOutcome run_export(Player& p, const ExportJob& job) {
           slots = sink->slots();
         } else {
           auto ring = p.screen.create_ring(output.width, output.height, depth.ring_slots,
-                                           c.backend_name == "tensorrt");
+                                           gpu::is_cuda_backend(c.backend_name));
           if (!ring) return std::unexpected(std::move(ring.error()));
           slots = std::move(*ring);
         }

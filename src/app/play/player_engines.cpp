@@ -22,6 +22,7 @@
 #include "app/play/derived_model.h"
 #include "app/play/drba_fused_choice.h"
 #include "app/play/engine_build.h"
+#include "app/play/engine_switch.h"
 #include "app/play/home_screen.h"
 #include "app/play/host_facts.h"
 #include "app/play/i18n.h"
@@ -35,6 +36,7 @@
 #include "app/play/user_keys.h"
 #include "core/log.h"
 #include "core/utf8_path.h"
+#include "gpu/cuda_mode.h"
 #include "gpu/gmfss_trials.h"
 #include "gpu/rife_trials.h"
 #include "kernels/spec/distil_drba.h"
@@ -425,7 +427,28 @@ std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> prepare_dist
                                            .height = g.padded_height,
                                            .first_build_s = 1.0},
                                gpu::Lane::Interpolate);
-  if (engine && *engine && fused) fused->used = true;
+  if (engine && *engine && fused) {
+    fused->used = true;
+    fused->cuda_direct = true;
+  }
+  return engine;
+}
+
+std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> prepare_distil_fused(
+    Player& p, const gpu::BackendInit& init, gpu::Backend& backend, const std::filesystem::path& source,
+    const gpu::Shape& shape, EngineLabel label) {
+  const auto derived = paths::derived_models(p.paths);
+  auto manifest = prepare::derive_drba_fused(source, derived, label.height, label.width);
+  if (!manifest) return std::unexpected(std::move(manifest.error()));
+  label.name = i18n::tr("Fused DistilDRBA");
+  label.first_build_s = EngineLabel{}.first_build_s;
+  auto engine = prepare_engine(p, init, backend, *manifest, shape, label, gpu::Lane::Interpolate);
+  if (engine && *engine) {
+    // Cinq fichiers par taille : seules les dernières tailles servies restent (A09-11).
+    purge_sized_derivatives(
+        derived, std::format("{}-{}-", core::to_utf8(source.stem()), prepare::kDrbaFusedDerivation),
+        *manifest);
+  }
   return engine;
 }
 
@@ -437,8 +460,17 @@ std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> prepare_dist
     PrecisionTier tier, DrbaFusedUse* fused, bool* motion, bool image_elsewhere) {
   std::optional<DrbaModel> found = find_distil_drba(dirs, drba_half_flow(work_height));
   note_drba_fallback(found, work_height);
-  if ((init.trials & gpu::kRifeCudaDirect) != 0 && backend.capabilities().name == "tensorrt")
-    return prepare_distil_cuda(p, init, backend, found, work_width, work_height, align, tier, fused);
+  if ((init.trials & gpu::kRifeCudaDirect) != 0 && gpu::is_cuda_backend(backend.capabilities().name)) {
+    auto native = prepare_distil_cuda(p, init, backend, found, work_width, work_height, align, tier, fused);
+    if (native || watch_now(native.error()) || preparation_stopped(native.error())) return native;
+    log_channel("app")->warn("DistilDRBA CUDA direct indisponible ({}) : DistilDRBA entier sous TensorRT",
+                             native.error().detail);
+    if (fused != nullptr) {
+      fused->declined = native.error().detail;
+      fused->refused = native.error().code;
+    }
+    fused = nullptr;
+  }
   if (found && tier != PrecisionTier::Balanced) {
     // Le cran rendu décide du fusionné, pas le cran demandé (A31-06, A31-07 : drba_fused_choice.h).
     const DrbaTier plan =
@@ -474,34 +506,14 @@ std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> prepare_dist
                           .first_build_s = kDrbaFirstBuildS};
   // Le graphe coupé d'abord : un refus de la découpe, de la construction ou du chargement garde l'entier.
   if (fused != nullptr) {
-    auto manifest = prepare::derive_drba_fused(found->path, paths::derived_models(p.paths), g.padded_height,
-                                               g.padded_width);
-    if (!manifest) {
-      fused->declined = manifest.error().detail;
-      fused->refused = manifest.error().code;
-    } else {
-      auto engine = prepare_engine(p, init, backend, *manifest, shape,
-                                   EngineLabel{.name = i18n::tr("Fused DistilDRBA"),
-                                               .model = label.model,
-                                               .width = g.padded_width,
-                                               .height = g.padded_height},
-                                   gpu::Lane::Interpolate);
-      if (!engine && watch_now(engine.error())) return engine;  // A31-15 : aucun repli sur l'entier
-      if (!engine) {
-        fused->declined = engine.error().detail;
-        fused->refused = engine.error().code;
-      } else if (!*engine) {
-        return std::nullopt;  // fenêtre fermée pendant la construction
-      } else {
-        fused->used = true;
-        // Cinq fichiers par taille : seules les dernières tailles servies restent (A09-11).
-        purge_sized_derivatives(
-            paths::derived_models(p.paths),
-            std::format("{}-{}-", core::to_utf8(found->path.stem()), prepare::kDrbaFusedDerivation),
-            *manifest);
-        return engine;
-      }
+    auto engine = prepare_distil_fused(p, init, backend, found->path, shape, label);
+    if (engine) {
+      fused->used = engine->has_value();
+      return engine;
     }
+    if (watch_now(engine.error()) || preparation_stopped(engine.error())) return engine;
+    fused->declined = engine.error().detail;
+    fused->refused = engine.error().code;
   }
   // Le graphe entier en variante mouvement : ses sorties changées, puis sa taille fixée ; un refus garde
   // l'image.
@@ -572,9 +584,22 @@ std::uint32_t warp_trials(const PlayOptions& options, const PlaySettings& settin
 
 }  // namespace
 
+std::string library_name(const Player& p) {
+  if (!p.library) return {};
+  std::string name = core::to_utf8(p.library->path().filename());
+  if (engine_of_library(p.library->path()) != core::EngineId::TensorRt) return name;
+  const auto mode = cuda_inference_mode(p.engines);
+  if (mode == gpu::kCudaNativeInference) name += ":cuda";
+  if (mode == gpu::kTensorRtInference) name += ":tensorrt";
+  return name;
+}
+
 // Ce que le backend de la chaîne reçoit du lecteur, options d'essai comprises (--profile-dispatches…).
 gpu::BackendInit chain_backend_init(Player& p, const PlaySettings& settings, int order_factor) {
   const ExperimentalSettings& trials = settings.experimental;
+  const auto mode = cuda_inference_mode(p.engines);
+  const bool cuda_direct =
+      mode == gpu::kCudaNativeInference || (mode != gpu::kTensorRtInference && trials.rife_cuda_direct);
   const bool nvof_roundtrip = p.options.nvof_roundtrip || (settings.layers && trials.nvof_layer_guard);
   const bool glow = trials.glow_guidance() && p.options.scene_map && settings.rife_factor >= 2 &&
                     hdr_wanted(settings.hdr_mode, p.options.sdr, content_peak_nits(p.screen.window()));
@@ -583,13 +608,13 @@ gpu::BackendInit chain_backend_init(Player& p, const PlaySettings& settings, int
           .log = backend_log(),
           .profile_dispatches = p.options.profile_dispatches,
           .filtered_warp = p.options.filtered_warp,
-          .trials = (p.options.l2_keep ? gpu::kTrialL2Keep : 0U) |
+          .trials = mode | (p.options.l2_keep ? gpu::kTrialL2Keep : 0U) |
                     warp_trials(p.options, settings, order_factor) |
                     (p.options.rife_hwc8 ? gpu::kTrialRifeHwc8 : 0U) |
                     (p.options.span_native_edges ? gpu::kTrialSpanNative : 0U) |
                     (trials.span_fp8_native_blocks ? gpu::kTrialSpanFp8NativeBlocks : 0U) |
                     (p.options.rife_native ? gpu::kTrialRifeNative : 0U) |
-                    (trials.rife_cuda_direct ? gpu::kRifeCudaDirect : 0U) |
+                    (cuda_direct ? gpu::kRifeCudaDirect : 0U) |
                     (p.options.gmfss_native ? gpu::kTrialGmfssNative : 0U) |
                     (p.options.gmfss_feature_reuse ? gpu::kTrialGmfssFeatureReuse : 0U) |
                     (trials.gmflow_fast ? gpu::kTrialGmflowFast : 0U) |

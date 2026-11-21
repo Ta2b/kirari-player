@@ -109,11 +109,11 @@ std::string motion_description(const InterpChoice& choice) {
     case InterpLevel::GmfssMiddle:
       return i18n::tr(
           "RIFE 4.25 for most frames, GMFSS union for the middle of fast motion: holds fast pans and "
-          "rotations better. Heavier than RIFE. NVIDIA RTX (TensorRT) only; a trial.");
+          "rotations better. Heavier than RIFE. Requires TensorRT or ZML.");
     case InterpLevel::GmfssUnion:
       return i18n::tr(
-          "Prioritizes GMFSS keys on every moving pair, with RIFE when time is short. The GMFSS options "
-          "also offer a mode without RIFE. NVIDIA RTX (TensorRT) only.");
+          "Uses GMFSS Fortuna Union for every interpolated frame. The advanced options let "
+          "you combine it with RIFE. Requires CUDA native, TensorRT or ZML.");
     case InterpLevel::System:
       return i18n::tr(
           "Apple: macOS optical flow (VideoToolbox, macOS 15.4+), no model to download. Core ML backend "
@@ -180,7 +180,8 @@ bool gmfss_available(const SettingsChoices& choices) {
 }
 
 bool interpolation_available(const SettingsChoices& choices) {
-  return choices.rife_available || gmfss_available(choices) || choices.rife_loaded;
+  return choices.rife_available || choices.distil_drba_available || gmfss_available(choices) ||
+         choices.rife_loaded;
 }
 
 void gmfss_state_note(const PlaySettings& d, const SettingsChoices& choices) {
@@ -216,8 +217,7 @@ void level_items(PlaySettings& d, const SettingsChoices& choices, bool exporting
     if (ImGui::Selectable(level_text(choice).c_str(), on && level_now == choice.level)) {
       d.motion_engine = choice.engine;
       d.gmfss_middle = choice.gmfss_middle;
-      if (choice.engine == MotionEngine::Gmfss && choices.default_rife_model.empty())
-        d.gmfss_every_instant = true;
+      if (choice.engine == MotionEngine::Gmfss) d.gmfss_every_instant = true;
       if (choice.engine == MotionEngine::Rife)
         d.rife_model =
             choice.rife_model == choices.default_rife_model ? std::string() : std::string(choice.rife_model);
@@ -600,6 +600,7 @@ void motion_advanced(PlaySettings& d, const SettingsChoices& choices, bool expor
     panel::next_box();
     ImGui::BeginDisabled(!on);
     gmfss_options(d, choices);
+    ImGui::BeginDisabled(choices.engine_in_use != core::EngineId::Cuda);
     ImGui::Checkbox(i18n::tr("Combined GridNet output (test)"), &d.experimental.gmfss_folded_tail);
     panel::tip(i18n::tr("Combined GridNet output (test)"),
                i18n::tr("Combines the last two GridNet convolutions on a verified model. Turning it off "
@@ -615,6 +616,7 @@ void motion_advanced(PlaySettings& d, const SettingsChoices& choices, bool expor
                i18n::tr("Writes the warped features directly into GridNet on compatible NVIDIA RTX 40 "
                         "cards at 1080p. Turning it off restores the separate layout conversion."),
                panel::Apply::Reload);
+    ImGui::EndDisabled();
     panel::end_group();
     ImGui::EndDisabled();
   }
@@ -632,17 +634,8 @@ void motion_advanced(PlaySettings& d, const SettingsChoices& choices, bool expor
                "RIFE only; Smooth held drawings replaces it."));
   pair_scale_checkbox(d);
   strong_middle_checkbox(d);
-  const bool distil = d.motion_engine == MotionEngine::DistilDrba;
-  const bool cuda_interpolation = choices.tensor_cores && choices.engine_in_use == core::EngineId::TensorRt;
-  if (cuda_interpolation && (d.motion_engine == MotionEngine::Rife || gmfss || distil)) {
-    ImGui::Checkbox(i18n::tr("Direct CUDA interpolation (test)"), &d.experimental.rife_cuda_direct);
-    panel::tip(i18n::tr("Direct CUDA interpolation (test)"),
-               i18n::tr("Loads compatible RIFE, GMFSS and DistilDRBA weights into CUDA kernels without "
-                        "building or comparing TensorRT plans. DistilDRBA requires Balanced precision "
-                        "and a 1920×1088 model input. In a 1080p video, turn off 720p motion estimation."),
-               panel::Apply::Reload);
-  }
-  if (choices.tensor_cores && distil && !(cuda_interpolation && d.experimental.rife_cuda_direct)) {
+  if (choices.tensor_cores && !choices.engine_in_use && d.motion_engine == MotionEngine::DistilDrba &&
+      !d.experimental.rife_cuda_direct) {
     ImGui::Checkbox(i18n::tr("Native DistilDRBA final block (test)"), &d.experimental.drba_native_tail);
     panel::tip(i18n::tr("Native DistilDRBA final block (test)"),
                i18n::tr("Tries the CUDA Winograd final block after a quality and speed check. Turning it off "

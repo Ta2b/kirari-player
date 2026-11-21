@@ -107,11 +107,12 @@ const char* gelu_problem(const OnnxView& g, const Nodes& n) {
   if (n.div->inputs.size() != 2 || n.div->inputs[0] != h ||
       !scalar_is(g, n.div->inputs[1], sqrt2, sqrt2 * kFp16Rounding))
     return "Div par √2 de la GELU exacte";
-  if (n.erf->inputs != std::vector{n.div->outputs[0]}) return "Erf";
+  if (n.erf->inputs.size() != 1 || n.erf->inputs[0] != n.div->outputs[0]) return "Erf";
   if (n.add->inputs.size() != 2 || n.add->inputs[0] != n.erf->outputs[0] ||
       !scalar_is(g, n.add->inputs[1], 1.0F, 0.0F))
     return "Add de 1 après Erf";
-  if (n.mul->inputs != std::vector{h, n.add->outputs[0]}) return "Mul de la GELU";
+  if (n.mul->inputs.size() != 2 || n.mul->inputs[0] != h || n.mul->inputs[1] != n.add->outputs[0])
+    return "Mul de la GELU";
   if (n.mul1->inputs.size() != 2 || n.mul1->inputs[0] != n.mul->outputs[0] ||
       !scalar_is(g, n.mul1->inputs[1], 0.5F, 0.0F))
     return "Mul par 0,5 de la GELU";

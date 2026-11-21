@@ -1,5 +1,7 @@
 # Moteurs des réseaux
 
+Voir [Moteurs portables](moteurs-portables.md) pour les choix CUDA natif, HIP, Slang et Triton, leur préparation et la qualification par GPU.
+
 Le lecteur fait tourner ses réseaux (SPAN pour l'agrandissement, RIFE et DistilDRBA pour
 l'interpolation) sur l'un de ces moteurs. Le choix se fait à l'écran des moteurs du premier lancement, ou
 dans Vidéo > Général (moteur de calcul et carte graphique), et s'enregistre dans `settings.toml`.
@@ -8,12 +10,13 @@ dans Vidéo > Général (moteur de calcul et carte graphique), et s'enregistre d
 
 | Moteur | GPU | Livraison | Code |
 |---|---|---|---|
-| **TensorRT** (CUDA, NVDEC) | NVIDIA RTX | téléchargé : notre module depuis la release, les bibliothèques NVIDIA depuis pypi.nvidia.com | `src/gpu/cuda` |
-| **Vulkan** | tous, et le seul pour AMD et Intel | livré avec le lecteur | `src/gpu/vulkan` |
+| **TensorRT** et **CUDA natif** | NVIDIA RTX | module partagé, avec les bibliothèques NVIDIA | `src/gpu/cuda` |
+| **Vulkan** | tous | livré avec le lecteur | `src/gpu/vulkan` |
+| **ZML** | NVIDIA (CUDA), AMD (ROCm), Intel (oneAPI), Apple Silicon (Metal) selon le greffon livré | composant optionnel du paquet, mesuré sur RTX 4070 Ti | [Intégration et banc](zml.md) |
 | **Core ML** (Metal) | Apple | livré avec le lecteur macOS | `src/gpu/coreml` |
+| **HIP**, **Slang**, **Triton** | selon le GPU et le paquet de noyaux | modules et ressources optionnels | [Préparation](moteurs-portables.md) |
 
-Règle : une carte NVIDIA RTX prend TensorRT, toute autre carte prend Vulkan. Vulkan est aussi le repli de
-TensorRT quand son module ne s'ouvre pas.
+Vulkan sert de repli si le moteur choisi ne s'ouvre pas sur le GPU de rendu.
 
 ### Voie CUDA spécialisée sur NVIDIA
 

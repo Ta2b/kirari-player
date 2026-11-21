@@ -20,6 +20,15 @@ target_compile_definitions(kirari_gpu INTERFACE KIRARI_BOUNDARY_HASH=0x${kirari_
 
 # Socle de calcul Vulkan (vk_compute), sous vulkan/compute.
 add_subdirectory(vulkan)
+if(KIRARI_WITH_ZML)
+  add_subdirectory(zml)
+endif()
+foreach(runtime hip slang triton)
+  string(TOUPPER "${runtime}" name)
+  if(KIRARI_WITH_${name})
+    add_subdirectory(${runtime})
+  endif()
+endforeach()
 # Les parties portables du backend Core ML, vérifiées partout : les images de l'interpolation
 # d'Apple (coreml/vt_pixels.h), la place et les noms du modèle compilé (coreml/coreml_compiled.h).
 # Les clés d'Artifact des moteurs fusionnés du backend TensorRT, en C++ pur : testées sans CUDA (B03-09).

@@ -26,6 +26,7 @@ void keep_gpu_profile(std::span<const gpu::GpuStageSummary> stages,
 struct BenchChain {
   Tier level = Tier::Normal;
   std::int64_t period_us = 0;  // période de l'écran ; 0 : inconnue
+  std::int64_t playback_elapsed_us = 0;
   int work_height = 0;
   std::string rife_model;
   std::string span_variant;

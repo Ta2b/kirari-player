@@ -85,7 +85,9 @@ class KernelRunner {
   // Plans 0 à 5 de l'entrée de RIFE : a et b (w × h) dans la fenêtre de rife_geometry(w, h) de
   // input (planes plans : 11 pour RIFE, dont les plans 6 à 10 restent à rife_constants), black autour.
   Done rife_frames(Recorder& recorder, const TensorView& a, const TensorView& b, const TensorView& input,
-                   float black, std::uint32_t planes = kernels::kRifeInputChannels);
+                   float black, std::uint32_t planes = kernels::kRifeInputChannels, bool extend_edge = false);
+  // Copie la troisième image du trio dans les plans 3 à 5 de pair12, avec le même bord que rife_frames.
+  Done drba_third_image(Recorder& recorder, const TensorView& image, const TensorView& pair12, float black);
   // Écarts de luma BT.709 tirée du RGB par bloc 32 × 32 : sums reçoit la somme de chaque bloc
   // (block_count float), worst[0] le pire bloc en 1/256 de niveau (levels pas entre noir et
   // blanc), remis à zéro à chaque exécution.

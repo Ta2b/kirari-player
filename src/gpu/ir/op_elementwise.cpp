@@ -41,6 +41,8 @@ void for_each_pair(const Dims& a, const Dims& b, const Dims& out, Fn&& fn) {
 
 float apply_float(OpKind op, float a, float b) {
   switch (op) {
+    case OpKind::Pow:
+      return std::pow(a, b);
     case OpKind::Add:
       return a + b;
     case OpKind::Sub:
@@ -108,6 +110,16 @@ bool fmod_of(const Node& node) {
 // est celui de la référence des tests, et les noyaux GLSL doivent le suivre.
 float activate(const Node& node, float x, float lo, float hi) {
   switch (node.op) {
+    case OpKind::Neg:
+      return -x;
+    case OpKind::Sin:
+      return std::sin(x);
+    case OpKind::Cos:
+      return std::cos(x);
+    case OpKind::Erf:
+      return std::erf(x);
+    case OpKind::Abs:
+      return std::abs(x);
     case OpKind::Relu:
       return x > 0.0F ? x : 0.0F;
     case OpKind::LeakyRelu: {
@@ -164,13 +176,37 @@ std::expected<Value, Refusal> cast(const Node& node, const Value& in, DataType t
 
 }  // namespace
 
+namespace {
+bool predicate(OpKind op) {
+  return op == OpKind::Equal || op == OpKind::Less || op == OpKind::Greater || op == OpKind::GreaterEqual ||
+         op == OpKind::LogicalAnd;
+}
+template <class T>
+bool compare(OpKind op, T a, T b) {
+  switch (op) {
+    case OpKind::Less:
+      return a < b;
+    case OpKind::Greater:
+      return a > b;
+    case OpKind::GreaterEqual:
+      return a >= b;
+    case OpKind::LogicalAnd:
+      return a != 0 && b != 0;
+    default:
+      return a == b;
+  }
+}
+}  // namespace
 Inferred infer_binary(const Node& node, std::span<const Operand> in) {
   const Operand& a = in[0];
   const Operand& b = in[1];
   if (!present(in, 0) || !present(in, 1)) return graph_error(node, "deux opérandes attendus");
-  if (a.type != b.type) {
+  if (a.type != b.type && node.op != OpKind::Pow) {
     return graph_error(node, std::format("types {} et {} différents", name(a.type), name(b.type)));
   }
+  if (a.type == DataType::I64 && node.op == OpKind::Pow) return unsupported_error(node, "puissance entière");
+  if (node.op == OpKind::LogicalAnd && a.type != DataType::I64)
+    return graph_error(node, "deux masques attendus");
   if (a.type == DataType::I64 && node.op == OpKind::PRelu) return graph_error(node, "PRelu sur des entiers");
   if (a.type != DataType::I64 && node.op == OpKind::Mod && !fmod_of(node)) {
     return graph_error(node, "Mod flottant exige fmod = 1");
@@ -178,13 +214,21 @@ Inferred infer_binary(const Node& node, std::span<const Operand> in) {
   auto dims = broadcast_dims(node, *a.dims, *b.dims);
   if (!dims) return std::unexpected(dims.error());
   if (node.op == OpKind::PRelu && *dims != *a.dims) return shape_error(node, "la pente déborde de l'entrée");
-  return std::vector<OutputInfo>{{.type = a.type, .dims = std::move(*dims)}};
+  return std::vector<OutputInfo>{
+      {.type = predicate(node.op) ? DataType::I64 : a.type, .dims = std::move(*dims)}};
 }
 
 Evaluated eval_binary(const Node& node, std::span<const Value* const> in, std::span<const OutputInfo> outs) {
   const Value& a = *in[0];
   const Value& b = *in[1];
   Value out = make_output(outs[0]);
+  if (predicate(node.op)) {
+    for_each_pair(a.dims, b.dims, out.dims, [&](std::size_t pos, std::size_t ia, std::size_t ib) {
+      out.i[pos] =
+          a.type == DataType::I64 ? compare(node.op, a.i[ia], b.i[ib]) : compare(node.op, a.f[ia], b.f[ib]);
+    });
+    return std::vector<Value>{std::move(out)};
+  }
   if (a.type == DataType::I64) {
     const bool fmod = fmod_of(node);
     std::expected<void, Refusal> status;
@@ -200,7 +244,8 @@ Evaluated eval_binary(const Node& node, std::span<const Value* const> in, std::s
     if (!status) return std::unexpected(status.error());
   } else {
     for_each_pair(a.dims, b.dims, out.dims, [&](std::size_t pos, std::size_t ia, std::size_t ib) {
-      out.f[pos] = apply_float(node.op, a.f[ia], b.f[ib]);
+      out.f[pos] =
+          apply_float(node.op, a.f[ia], b.type == DataType::I64 ? static_cast<float>(b.i[ib]) : b.f[ib]);
     });
   }
   return std::vector<Value>{std::move(out)};
@@ -208,6 +253,8 @@ Evaluated eval_binary(const Node& node, std::span<const Value* const> in, std::s
 
 Inferred infer_unary(const Node& node, std::span<const Operand> in) {
   const Operand& x = in[0];
+  if (node.op == OpKind::LogicalNot || node.op == OpKind::ToBool)
+    return std::vector<OutputInfo>{{DataType::I64, *x.dims}};
   if (node.op == OpKind::Cast) {
     auto attrs = attrs_of<CastAttrs>(node);
     if (!attrs) return std::unexpected(attrs.error());
@@ -233,6 +280,14 @@ Evaluated eval_unary(const Node& node, std::span<const Value* const> in, std::sp
     auto out = cast(node, x, outs[0].type);
     if (!out) return std::unexpected(out.error());
     return std::vector<Value>{std::move(*out)};
+  }
+  if (node.op == OpKind::LogicalNot || node.op == OpKind::ToBool) {
+    auto out = make_output(outs[0]);
+    for (std::size_t k = 0; k < out.i.size(); ++k) {
+      bool set = x.type == DataType::I64 ? x.i[k] != 0 : x.f[k] != 0;
+      out.i[k] = node.op == OpKind::LogicalNot ? !set : set;
+    }
+    return std::vector<Value>{std::move(out)};
   }
   if (node.op == OpKind::Identity) return std::vector<Value>{x};
 

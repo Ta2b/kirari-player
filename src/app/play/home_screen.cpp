@@ -147,10 +147,19 @@ bool native_span_here(const HomeScreen& h, bool tensorrt) {
          span_native_presumed(gpu.name);
 }
 
-// Le moteur effectif n'est connu qu'à l'ouverture. Vérifier les fichiers seulement si TensorRT est choisi.
-bool home_gmfss_supported(const HomeState& st, const SpanFp8Facts& facts) {
-  return gmfss_kept() && facts.tensorrt_present && facts.vendor == GpuVendor::Nvidia &&
-         chosen(st.engines, core::EngineId::TensorRt);
+// À l'accueil, la sélection remplace les capacités de la chaîne, disponibles en lecture.
+bool home_gmfss_supported(const HomeScreen& h, const HomeState& st, const SpanFp8Facts& facts) {
+  if (!gmfss_kept()) return false;
+  const auto preferred = st.engines.preferred[usage(core::Usage::Upscale)];
+  if (preferred == core::EngineId::Zml)
+    return std::ranges::contains(installed_switchable(h.catalog, h.paths, facts.vendor), core::EngineId::Zml);
+  return (!preferred || preferred == core::EngineId::TensorRt || preferred == core::EngineId::Cuda) &&
+         facts.tensorrt_present && facts.vendor == GpuVendor::Nvidia &&
+         (chosen(st.engines, core::EngineId::TensorRt) || chosen(st.engines, core::EngineId::Cuda));
+}
+
+bool home_fp8_gpu(const GpuFacts& gpu, bool rdna4) {
+  return rdna4 || (gpu.vendor == GpuVendor::Nvidia && gpu.tensor_cores && fp8_presumed(gpu.name));
 }
 
 // Ce que le menu propose sans vidéo ouverte : les modèles et les moteurs du poste, la source type.
@@ -167,9 +176,8 @@ SettingsChoices home_choices(const HomeScreen& h, const HomeState& st, const Pla
   // calcule dès Ada (sm 8.9), pas sur une RTX 20 ou 30 (A37-02) ni 50 (B08-07) ; Vulkan sur une RDNA 4. Le
   // moteur le confirme à l'ouverture.
   const bool rdna4 = gpu_facts(h.screen).vendor == GpuVendor::Amd && rdna4_presumed(gpu_facts(h.screen).name);
-  const bool fp8_engine =
-      rdna4 || (gpu_facts(h.screen).vendor == GpuVendor::Nvidia && gpu_facts(h.screen).tensor_cores &&
-                fp8_presumed(gpu_facts(h.screen).name));
+  const bool zml = st.engines.preferred[usage(core::Usage::Upscale)] == core::EngineId::Zml;
+  const bool fp8_engine = !zml && home_fp8_gpu(gpu_facts(h.screen), rdna4);
   // Le mode Performance de SPAN (noyaux CUTLASS) : une RTX 40 (Ada, 8.9, portable compris : le nom de la
   // carte le dit, « RTX 4050 Laptop GPU » comme « RTX 4070 Ti ») et le module TensorRT, ou une RDNA 4 sous
   // Vulkan ; le moteur le confirme à l'ouverture d'une vidéo.
@@ -181,7 +189,7 @@ SettingsChoices home_choices(const HomeScreen& h, const HomeState& st, const Pla
       .capability = rdna4 || (kSpanFp8Here && gpu_facts(h.screen).vendor == GpuVendor::Nvidia &&
                               span_fp8_presumed(gpu_facts(h.screen).name) &&
                               tensorrt_backend_present(h.catalog, h.paths))};
-  const bool gmfss_supported = home_gmfss_supported(st, fp8_facts);
+  const bool gmfss_supported = home_gmfss_supported(h, st, fp8_facts);
   GmfssMenuProbe probe;
   const GmfssAvailability gmfss = gmfss_supported ? probe.read(places) : GmfssAvailability{};
   const std::int64_t period = display_period_us(h.screen.window());
@@ -195,11 +203,10 @@ SettingsChoices home_choices(const HomeScreen& h, const HomeState& st, const Pla
       .source_rate = media::Rational{.num = 24000, .den = 1001},
       .display_hz = period > 0 ? 1e6 / static_cast<double>(period) : 0.0,
       .rife_available = rife.has_value() || drba || offered(MotionEngine::Apple),
-      .span_tiers = model
-                        ? span_tiers(model->path, paths::derived_models(h.paths), fp8_engine,
-                                     fp8_facts.capability,  // les noyaux CUTLASS se présument sur une RTX 40
-                                     native_span_here(h, fp8_facts.tensorrt_present))
-                        : TierSupport{},
+      .span_tiers = model ? span_tiers(model->path, paths::derived_models(h.paths), fp8_engine,
+                                       !zml && fp8_facts.capability,
+                                       !zml && native_span_here(h, fp8_facts.tensorrt_present))
+                          : TierSupport{},
       .rife_tiers = rife ? sibling_tiers(rife->path, fp8_engine) : TierSupport{},
       .drba_tiers = drba_file ? sibling_tiers(drba_file->path, fp8_engine) : TierSupport{},
       .distil_drba_available = drba,

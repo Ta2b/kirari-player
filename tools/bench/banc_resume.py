@@ -55,7 +55,7 @@ def read_stats(path):
     return rows
 
 
-def visible_stats(path, rows):
+def visible_stats(path, rows, *, partial=False):
     """Lie chaque soumission à son propre retour, y compris les retours arrivés hors ordre."""
     path = os.fspath(path)
     sidecar = path.removesuffix(".tsv") + ".screen.tsv"
@@ -83,6 +83,8 @@ def visible_stats(path, rows):
             confirmed[stamp] = row
     fresh = sorted(stamp for stamp, row in confirmed.items() if row["fresh"] == "1")
     if len(fresh) < 2:
+        if partial:
+            return {"images_neuves": len(fresh), "images_neuves_s": None}
         return None
     intervals = [b - a for a, b in zip(fresh, fresh[1:])]
     return {

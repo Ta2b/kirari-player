@@ -58,7 +58,8 @@ std::optional<PlaySettings> calibrate_on_screen(PlaceboScreen& screen, PlayerUi&
 std::vector<std::filesystem::path> backend_candidates(const EngineCatalog& catalog, const PlayerPaths& paths);
 
 // Les moteurs des réseaux dont la bibliothèque est sur le poste, pour l'onglet Moteurs.
-std::vector<core::EngineId> installed_switchable(const EngineCatalog& catalog, const PlayerPaths& paths);
+std::vector<core::EngineId> installed_switchable(const EngineCatalog& catalog, const PlayerPaths& paths,
+                                                 GpuVendor vendor);
 
 // La bibliothèque pour les moteurs choisis, celle du moteur préféré essayée en premier ; Vulkan
 // reste le recours (BackendLibrary::choose).

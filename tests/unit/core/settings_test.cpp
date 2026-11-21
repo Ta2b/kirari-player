@@ -118,9 +118,9 @@ TEST_CASE("Réglages : écrire puis relire rend les mêmes valeurs", "[settings]
 }
 
 TEST_CASE("Réglages : une valeur fausse est écartée seule, le fichier vaut (P2.21)", "[settings]") {
-  for (const char* text :
-       {"first_run_done = \"yes\"", "[engines]\nchosen = [\"cuda\"]", "[engines]\ninstalled = \"vulkan\"",
-        "[engines]\npreferred = { upscale = \"tensorrt\" }", "playback = 3"}) {
+  for (const char* text : {"first_run_done = \"yes\"", "[engines]\nchosen = [\"moteur-inconnu\"]",
+                           "[engines]\ninstalled = \"vulkan\"",
+                           "[engines]\npreferred = { upscale = \"tensorrt\" }", "playback = 3"}) {
     INFO(text);
     CHECK(skipped_of(text).size() == 1);
   }

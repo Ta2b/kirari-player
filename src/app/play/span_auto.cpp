@@ -6,6 +6,7 @@
 
 #include "app/play/i18n.h"
 #include "core/log.h"
+#include "gpu/cuda_mode.h"
 
 namespace kirari::app::play {
 
@@ -19,7 +20,7 @@ std::string span_fp8_unavailable_reason(const SpanFp8Facts& facts) {
         "NVIDIA RTX 40): {} plays SPAN in FP16",
         facts.gpu_name.empty() ? std::string(i18n::tr("this card")) : facts.gpu_name);
   }
-  if (facts.backend_name != "tensorrt") {
+  if (!gpu::is_cuda_backend(facts.backend_name)) {
     if (facts.tensorrt_present) {
       return i18n::tr_format(
           "TensorRT is installed but the player uses {}: pick TensorRT in Settings > Video > General",

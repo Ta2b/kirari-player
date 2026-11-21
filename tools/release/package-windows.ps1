@@ -29,14 +29,39 @@ $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"
 $Cuda = if ($env:KIRARI_WITH_CUDA) { $env:KIRARI_WITH_CUDA } else { "OFF" }
 if ($TensorRtOnly -and $Cuda -ne "ON") { throw "-TensorRtOnly demande KIRARI_WITH_CUDA=ON" }
 
-$Extra = @()
+$Zml = if ($env:KIRARI_ZML_BUNDLE -and -not $TensorRtOnly) { "ON" } else { "OFF" }
+$Extra = @("-DKIRARI_WITH_ZML=$Zml", "-DKIRARI_ZML_BUNDLE=$env:KIRARI_ZML_BUNDLE")
+$Portable = [ordered]@{
+  hip = if ($env:KIRARI_WITH_HIP -eq "ON" -and -not $TensorRtOnly) { "ON" } else { "OFF" }
+  slang = if ($env:KIRARI_SLANG_BUNDLE -and -not $TensorRtOnly) { "ON" } else { "OFF" }
+  triton = if (($env:KIRARI_TRITON_BUNDLE -or $env:KIRARI_TRITON_HIP_BUNDLE -or $env:KIRARI_TRITON_XPU_BUNDLE) -and -not $TensorRtOnly) {
+    "ON"
+  } else { "OFF" }
+}
+foreach ($engine in $Portable.Keys) {
+  $Extra += "-DKIRARI_WITH_$($engine.ToUpperInvariant())=$($Portable[$engine])"
+}
+if (-not $TensorRtOnly) {
+  foreach ($name in "KIRARI_HIP_ROCM_PREFIX", "KIRARI_HIP_CODE_DIRECTORY", "KIRARI_HIP_ARCHITECTURES", "KIRARI_HIP_INCLUDE",
+    "KIRARI_HIP_CUDA_CODE_DIRECTORY", "KIRARI_HIP_CUDA_ARCHITECTURES", "KIRARI_HIP_CUDA_ROOT", "KIRARI_HIP_CUDA_INCLUDE",
+    "KIRARI_SLANG_BUNDLE", "KIRARI_SLANG_ADDITIONAL_BUNDLES", "KIRARI_TRITON_BUNDLE", "KIRARI_TRITON_CUDA_ARCH",
+    "KIRARI_TRITON_CUDA_INCLUDE_DIR", "KIRARI_TRITON_HIP_BUNDLE", "KIRARI_TRITON_HIP_ARCH", "KIRARI_TRITON_HIP_INCLUDE_DIR",
+    "KIRARI_TRITON_XPU_BUNDLE", "KIRARI_TRITON_XPU_INCLUDE_DIR", "KIRARI_ZML_XLA_INCLUDE_DIR") {
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if ($null -ne $value -or ($name -eq "KIRARI_HIP_ARCHITECTURES" -and $env:KIRARI_PORTABLE_REQUIRED -eq "1")) {
+      $Extra += "-D$name=$value"
+    }
+  }
+}
+if ($Portable["slang"] -eq "ON") { $Extra += "-DVCPKG_MANIFEST_FEATURES=tests;player;slang" }
 # Arbre de construction de vcpkg ailleurs (un chemin court : les sources de certains ports
 # dépassent les 260 caractères de MSVC sous build/).
 if ($env:KIRARI_VCPKG_BUILDTREES) { $Extra += "-DVCPKG_INSTALL_OPTIONS=--x-buildtrees-root=$env:KIRARI_VCPKG_BUILDTREES" }
 # Un build TensorRT réutilisé peut avoir servi à un essai CUTLASS. Rétablir le défaut Windows à chaque appel.
 if ($Cuda -eq "ON") {
   $SpanFp8 = if ($env:KIRARI_WITH_SPAN_FP8) { $env:KIRARI_WITH_SPAN_FP8 } else { "OFF" }
-  $Extra += "-DKIRARI_WITH_SPAN_FP8:BOOL=$SpanFp8"
+  $SpanFp16 = if ($env:KIRARI_WITH_SPAN_FP16) { $env:KIRARI_WITH_SPAN_FP16 } else { "AUTO" }
+  $Extra += "-DKIRARI_WITH_SPAN_FP8:BOOL=$SpanFp8", "-DKIRARI_WITH_SPAN_FP16:STRING=$SpanFp16"
 }
 if ($Cuda -eq "ON" -and $env:KIRARI_TENSORRT_ROOT) { $Extra += "-DKIRARI_TENSORRT_ROOT=$env:KIRARI_TENSORRT_ROOT" }
 if ($Cuda -eq "ON" -and $env:KIRARI_TRTEXEC) { $Extra += "-DKIRARI_TRTEXEC:FILEPATH=$env:KIRARI_TRTEXEC" }
@@ -70,11 +95,21 @@ if (-not $TensorRtOnly) {
   Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $Stage | Out-Null
   Copy-Item "$Build/src/app/kirari.exe" $Stage
-  Copy-Item "$Build/src/app/*.dll" $Stage
+  # Les modules locaux du build ont leur propre étape d'empaquetage.
+  Copy-Item "$Build/src/app/*.dll" $Stage -Exclude "kirari_backend_*"
   Copy-Item "$Root/LICENSE", "$Root/THIRD_PARTY_NOTICES.md" $Stage
   Copy-Item (Join-Path $PSScriptRoot "windows/LISEZMOI.txt") $Stage
   Copy-Item "$Build/src/gpu/vulkan/backend/kirari_backend_vulkan.dll" $Stage
   Copy-Item "$Build/src/gpu/vulkan/backend/*.dll" $Stage -Exclude "kirari_backend_*" -ErrorAction SilentlyContinue
+  if ($Zml -eq "ON") {
+    cmake --install $Build --component zml --prefix $Stage
+    if ($LASTEXITCODE -ne 0) { throw "installation du paquet ZML" }
+  }
+  foreach ($engine in $Portable.Keys) {
+    if ($Portable[$engine] -ne "ON") { continue }
+    cmake --install $Build --component $engine --prefix $Stage
+    if ($LASTEXITCODE -ne 0) { throw "installation du paquet $engine" }
+  }
   # Le runtime C++ de Visual Studio (CRT dynamique, triplet x64-windows-release) est déployé à côté de
   # kirari.exe. Ces DLL servent aussi aux modules chargés dans le même processus (C51-05).
   if (-not $env:VCToolsRedistDir) { throw "VCToolsRedistDir absent : lancer depuis une invite x64 Native Tools (runtime C++ à livrer)" }
@@ -190,9 +225,17 @@ if ($env:KIRARI_ENGINES_LOCK) {
 }
 Copy-Item $Lock (Join-Path $Out "engines.lock") -Force
 
+if ($env:KIRARI_PORTABLE_REQUIRED -eq "1") {
+  python -I (Join-Path $PSScriptRoot "portable-assets.py") check-stage windows $Stage
+  if ($LASTEXITCODE -ne 0) { throw "contrôle des moteurs dans le paquet Windows" }
+}
 # Signature Authenticode du lecteur et de ses DLL avant l'archive (P7.1 ; sans effet sans certificat).
 pwsh (Join-Path $PSScriptRoot "windows/sign.ps1") $Stage
 if ($LASTEXITCODE -ne 0) { throw "signature" }
+if ($Zml -eq "ON") {
+  cmake "-Dstage=$Stage" -P "$Root/cmake/CheckZmlPackage.cmake"
+  if ($LASTEXITCODE -ne 0) { throw "contrôle du contenu du paquet ZML" }
+}
 Compress-Archive -Path $Stage -DestinationPath (Join-Path $Out "kirari-windows-x64.zip") -Force
 Get-ChildItem $Out -File | Where-Object { $_.Name -like "kirari-*" -and $_.Extension -ne ".txt" } | ForEach-Object {
   "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)"

@@ -31,6 +31,9 @@
 
 namespace kirari::gpu::vk::net {
 
+// Un moteur peut fournir un autre shader et sa géométrie pour un dispatch compatible.
+using SpecializeDispatch = std::span<const std::uint32_t> (*)(Dispatch&, const Target&);
+
 // Réglages de débogage du moteur.
 struct NetEngineOptions {
   // Profil des dispatchs (net_profile.h) : une estampille avant et après chacun, un tableau par
@@ -38,6 +41,8 @@ struct NetEngineOptions {
   bool profile_dispatches = false;
   // Reçoit le tableau du profil, et le constat d'un appareil sans horodatage. Vide : rien n'est écrit.
   std::function<void(std::string_view)> log;
+  SpecializeDispatch specialize = nullptr;
+  Target target;
 };
 
 class NetEngine {
@@ -110,6 +115,7 @@ class NetEngine {
         options_(std::move(options)),
         destroyed_mark_(context.destroyed().mark()) {}
   std::expected<void, Refusal> prepare(PipelineCache& pipelines);
+  std::expected<void, Refusal> prepare_pipelines(PipelineCache& pipelines);
   std::expected<BufferView, Refusal> resolve(const Binding& binding, std::span<const BufferView> inputs,
                                              std::span<const BufferView> outputs) const;
   // La place d'un tenseur qui n'est rangé dans aucun autre.

@@ -175,12 +175,14 @@ struct ChainEngines {
   std::unique_ptr<gpu::Engine> gmfss_fusion;
   GmfssUse gmfss_use = GmfssUse::Off;
   bool gmfss_half_loaded = false;
+  bool gmfss_cuda_direct = false;
   float gmfss_px = 15.0F;
   std::int64_t gmfss_cost_us = 0;  // GmfssSetup::cost_us et pair_us
   std::int64_t gmfss_pair_us = 0;
   bool rife_fused = false;        // rife ou rife_motion suit le découpage fusionné
   bool rife_cuda_direct = false;  // les poids ont été chargés directement dans nos noyaux CUDA
   bool drba_fused = false;        // drba est DistilDRBA fusionné (quatre moteurs et noyaux de colle)
+  bool drba_cuda_direct = false;
   // Le fusionné essayé puis refusé, le réseau entier à sa place (A03-21) : voir OpenedChain.
   std::optional<RefusalCode> rife_fused_refused;
   std::optional<RefusalCode> drba_fused_refused;
@@ -266,14 +268,13 @@ GmfssCost gmfss_cost(WorkSize size, bool half);
 // ×3 (×4 au demi-flot, à mesurer), là où l'Auto Stable se posait sur un anime nerveux au lieu d'osciller de
 // ×1 à ×7 entre scènes calmes et fortes. cap, le plafond choisi.
 int gmfss_auto_cap(const ChainEngines& c, int cap, double source_fps);
-std::optional<bool> load_gmfss(Player& p, const gpu::BackendInit& init, ChainEngines& c,
-                               const PlaySettings& settings, InnerFallbacks& inner,
-                               const std::string& library);
-// L'interpolation entière : GMFSS seul d'abord (RIFE ne se charge que s'il est refusé), puis RIFE, puis le
-// mélange sur le RIFE chargé. Faux : la fenêtre fermée.
+// GMFSS seul, RIFE seul, ou le mélange sur le RIFE chargé. Faux : la fenêtre fermée.
 std::expected<bool, StageFailure> load_motion(Player& p, const gpu::BackendInit& init, ChainEngines& c,
                                               const PlaySettings& settings, InnerFallbacks& inner,
                                               const std::string& library);
+std::expected<bool, StageFailure> load_drba(Player& p, const gpu::BackendInit& init, ChainEngines& c,
+                                            const PlaySettings& settings, InnerFallbacks& inner,
+                                            const std::string& library);
 
 // L'Auto plan par plan (chain_shot_plan.cpp, --shot-plan). drba_for_shots : DistilDRBA est-il à charger en
 // plus de RIFE (RIFE choisi, DistilDRBA trouvé, warp après SPAN pour que les deux soient en variante

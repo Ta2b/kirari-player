@@ -27,13 +27,14 @@
 #include "core/ring.h"
 #include "gpu/backend.h"
 #include "gpu/kernel_ops.h"
+#include "gpu/rife_features.h"
 #include "kernels/spec/scene_flow.h"
 #include "kernels/spec/span_tiles.h"
 
 namespace kirari::app::play::test {
 
 // Un moteur nommé par ses entrées et sorties ; l'étage ne fait que l'enfiler.
-class FakeEngine final : public gpu::Engine {
+class FakeEngine final : public gpu::Engine, public gpu::RifeFeatureHints {
  public:
   FakeEngine(std::string name, std::vector<std::string> inputs, std::vector<std::string> outputs)
       : name_(std::move(name)), inputs_(std::move(inputs)), outputs_(std::move(outputs)) {}
@@ -50,6 +51,8 @@ class FakeEngine final : public gpu::Engine {
   void next_pair_follows() override { ++follows_; }
   int times_only() const { return times_only_; }
   int follows() const { return follows_; }
+  void next_rife_features(gpu::RifeFeatureRequest request) override { features_.push_back(request); }
+  const auto& feature_requests() const { return features_; }
   void offer_gmfss_reuse() { gmfss_reuse_ = true; }
   bool next_gmfss_pair(bool follows) override { return gmfss_reuse_ && follows; }
   std::span<const std::string> input_names() const override { return inputs_; }
@@ -75,6 +78,7 @@ class FakeEngine final : public gpu::Engine {
   bool warm_ = false;
   bool gmfss_reuse_ = false;
   int warm_asked_ = 0;
+  std::vector<gpu::RifeFeatureRequest> features_;
   int times_only_ = 0;
   int follows_ = 0;
 };

@@ -48,6 +48,30 @@ std::string not_found_note(DWORD code, const std::filesystem::path& path) {
 
 }  // namespace
 
+// Le fichier de cette bibliothèque ; vide s'il échappe.
+std::filesystem::path library_containing(const void* address) {
+#ifdef _WIN32
+  HMODULE self = nullptr;
+  if (GetModuleHandleExW(
+          GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+          reinterpret_cast<LPCWSTR>(address), &self) == 0)
+    return {};
+  std::wstring name(MAX_PATH, L'\0');
+  for (;;) {
+    const DWORD length = GetModuleFileNameW(self, name.data(), static_cast<DWORD>(name.size()));
+    if (length == 0) return {};
+    if (length < name.size()) return std::filesystem::path(name.substr(0, length));
+    name.resize(name.size() * 2);
+  }
+#else
+  Dl_info info{};
+  if (dladdr(address, &info) == 0 || info.dli_fname == nullptr) return {};
+  std::error_code ec;
+  auto file = std::filesystem::absolute(info.dli_fname, ec);
+  return ec ? std::filesystem::path{} : file;
+#endif
+}
+
 std::expected<DynamicLibrary, Refusal> DynamicLibrary::open(const std::filesystem::path& given,
                                                             SymbolScope scope) {
   // « C:\x\engines/trt/nvinfer_10.dll » : des séparateurs mêlés trompent le chargeur sur le dossier de la
@@ -62,7 +86,6 @@ std::expected<DynamicLibrary, Refusal> DynamicLibrary::open(const std::filesyste
                               utf8(path)));
   }
 #ifdef _WIN32
-  (void)scope;  // Windows n'a qu'un espace de symboles par module
   // Les dépendances se cherchent à côté de la DLL, puis dans les dossiers du système. Son dossier s'ajoute
   // aussi à la recherche du processus : une DLL qu'elle charge plus tard par son nom s'y trouve, alors que le
   // PATH n'est plus lu (SetDefaultDllDirectories dans main.cpp, A20-07). Jamais retiré : la bibliothèque peut
@@ -76,9 +99,17 @@ std::expected<DynamicLibrary, Refusal> DynamicLibrary::open(const std::filesyste
         RefusalCode::LibraryUnavailable,
         std::format("{} ne se charge pas : {}{}", shown, windows_error(code), not_found_note(code, path)));
   }
+  if (scope == SymbolScope::GlobalResident) {
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, path.c_str(), &pinned)) {
+      FreeLibrary(module);
+      return refuse(RefusalCode::LibraryUnavailable, "le module ne peut rester chargé");
+    }
+  }
   return DynamicLibrary(static_cast<void*>(module), path);
 #else
-  const int flags = RTLD_NOW | (scope == SymbolScope::Global ? RTLD_GLOBAL : RTLD_LOCAL);
+  const int flags = RTLD_NOW | (scope == SymbolScope::Local ? RTLD_LOCAL : RTLD_GLOBAL) |
+                    (scope == SymbolScope::GlobalResident ? RTLD_NODELETE : 0);
   void* handle = dlopen(path.c_str(), flags);
   if (handle == nullptr) {
     const char* error = dlerror();

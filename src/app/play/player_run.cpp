@@ -85,6 +85,7 @@
 #include "core/log.h"
 #include "core/settings.h"
 #include "core/vrr_floor.h"
+#include "gpu/cuda_mode.h"
 #include "media/demuxer.h"
 #include "media/selection.h"
 #include "prepare/sha256.h"
@@ -117,12 +118,6 @@ void save_reopened(Player& p) {
       !saved)
     log_channel("app")->warn("{}", saved.error().detail);
   p.unsaved.reset();
-}
-
-// L'anneau refusé à l'ouverture du pipeline : la retraite le lit sous sa clé (C09-01, links.h).
-Refusal ring_refusal(Refusal refusal) {
-  refusal.key = std::string(kRingRefusalKey);
-  return refusal;
 }
 
 // B31-02 : l'étage que ce refus retire pour la réouverture (stage_fallback.h, retreat_stage) ; rien pour le
@@ -174,7 +169,7 @@ void mask_before_teardown(Player& p, bool closing, bool reopening) {
 // l'écran le demandent.
 UpscaleSetup graded(UpscaleSetup setup, const ChainEngines& c, Player& p) {
   if (!setup.slots.empty()) {
-    setup.grader = p.screen.source_grader(c.backend_name == "tensorrt", fps_of(p.video.frame_rate),
+    setup.grader = p.screen.source_grader(gpu::is_cuda_backend(c.backend_name), fps_of(p.video.frame_rate),
                                           setup.slots.front().generation);
   }
   return setup;
@@ -287,7 +282,7 @@ std::expected<std::optional<Reopen>, Refusal> run_chain(Player& p, PlaySettings 
                                            ? RingFormat::Rgb10a2Unorm
                                            : RingFormat::Rgba16Unorm;
         auto slots = out.create_ring(sized.width * factor, sized.height * factor, c.opened.shape.ring,
-                                     c.backend_name == "tensorrt", ring_format);
+                                     gpu::is_cuda_backend(c.backend_name), ring_format);
         if (!slots) {
           stage_refused = true;
           return std::unexpected(std::move(slots.error()));
@@ -302,10 +297,13 @@ std::expected<std::optional<Reopen>, Refusal> run_chain(Player& p, PlaySettings 
       },
       std::move(*read));
   if (!pipeline) {
-    // B31-02 : l'anneau ou l'étage refusé retire un étage, et la chaîne se rouvre au même endroit sans lui ;
-    // aucun des deux ne nomme son étage : l'interpolation d'abord (kRingRefusalKey, C09-01).
-    if (stage_refused && retreat(p, c, ring_refusal(pipeline.error())))
-      return Reopen{.settings = settings, .position_us = start_us, .paused = start_paused};
+    // L'anneau et l'étage sans nom essaient d'abord le repli de l'interpolation (B31-02, C09-01).
+    if (stage_refused) {
+      auto refusal = pipeline.error();
+      refusal.key = kRingRefusalKey;
+      if (retreat(p, c, refusal))
+        return Reopen{.settings = settings, .position_us = start_us, .paused = start_paused};
+    }
     return std::unexpected(std::move(pipeline.error()));
   }
   if ((*pipeline)->chapters_flattened() && p.notice.empty())
@@ -414,7 +412,8 @@ std::expected<std::optional<Reopen>, Refusal> run_chain(Player& p, PlaySettings 
   std::vector<Input> actions;  // vidée à chaque tour en s'appliquant (la 0.10.0 la rejouait sans fin)
   // Les réglages en direct changés pendant la préparation (loading_settings.h).
   if (auto later = std::exchange(p.loading.live, {})) actions.emplace_back(ApplySettings{.settings = *later});
-  session.begin(host_now_us());
+  const auto playback_start_us = host_now_us();
+  session.begin(playback_start_us);
   save_reopened(p);
   announce_start(p, start_us, session.view().duration_us);
   if (const i18n::Translated dropped = stage_notice(c.stage_notes); !dropped.empty())
@@ -709,6 +708,7 @@ std::expected<std::optional<Reopen>, Refusal> run_chain(Player& p, PlaySettings 
       wait_loop(wait_us, p.options.precise_wait);  // --precise-wait : à la microseconde (6.7)
     }
   }
+  const auto playback_elapsed_us = host_now_us() - playback_start_us;
   screen_saver.want(false);
   if (chain.dirty) {
     writer.post("play.toml", save_job(p.settings_path, saved_settings()));
@@ -719,19 +719,12 @@ std::expected<std::optional<Reopen>, Refusal> run_chain(Player& p, PlaySettings 
   p.quit = session.quit_asked();
   log_summary(session);
   log->info("{}", cadence.summary());
-  if (GpuTelemetry* const nvml = telemetry.get()) {
-    // Énergie de la lecture : le compteur NVML relu au début et à la fin, à l'instant même (B11-14).
-    const std::uint64_t energy_start_mj = telemetry.energy_start_mj();
-    const std::uint64_t energy_end_mj = nvml->energy_mj(host_now_us());
-    if (const auto per_frame =
-            millijoules_per_frame(energy_start_mj, energy_end_mj, session.stats().new_frames))
-      log->info("énergie : {:.1f} J, {:.1f} mJ par image neuve",
-                static_cast<double>(energy_end_mj - energy_start_mj) / 1000.0, *per_frame);
-  }
+  log_playback_energy(telemetry, session.stats().new_frames);
   if (p.options.bench_out) {
     write_bench_reading(*p.options.bench_out, gpu_facts(p.screen), session.stats(),
                         BenchChain{.level = static_cast<Tier>(p.options.bench_level.value_or(0)),
                                    .period_us = bench_period_us,
+                                   .playback_elapsed_us = playback_elapsed_us,
                                    .work_height = chain.running.work_height,
                                    .rife_model = chain.running.rife_model,
                                    .span_variant = span_variant,

@@ -3,6 +3,7 @@
 #pragma once
 
 #include <expected>
+#include <span>
 
 #include "core/types.h"
 #include "gpu/ir/ir.h"
@@ -11,7 +12,8 @@ namespace kirari::gpu::ir {
 
 // Pliage des constantes : un nœud dont toutes les entrées sont constantes,
 // ou un Shape d'une forme connue, devient une constante. Renvoie le nombre de nœuds pliés.
-std::expected<int, Refusal> fold_constants(Graph& graph);
+// Un abaisseur qui sait diffuser une petite constante peut garder ses sorties symboliques.
+std::expected<int, Refusal> fold_constants(Graph& graph, std::span<const TensorId> preserve = {});
 
 // Retire les nœuds dont aucune sortie n'atteint une sortie du graphe, puis les tenseurs orphelins.
 int eliminate_dead_code(Graph& graph);

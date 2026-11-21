@@ -70,6 +70,8 @@ struct BenchReading {
   // FrameStats::uninterpolated) ; 0 image neuve : lecteur plus ancien. Le verdict d'un essai avec RIFE s'en
   // sert (machine_calibration.h : credited_fps).
   std::int64_t new_frames = 0;
+  // Temps mural de la session, y compris les blocages avant et après les images neuves.
+  std::int64_t playback_elapsed_us = 0;
   std::int64_t uninterpolated = 0;
   // Le profil GPU de l'essai (0.2) : une table [[gpu_stage]] par étape ; vide : backend sans profil.
   std::vector<gpu::GpuStageSummary> gpu_stages;

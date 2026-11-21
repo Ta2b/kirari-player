@@ -12,6 +12,7 @@
 #include <SDL3/SDL_properties.h>
 
 #include "app/play/display_edid.h"
+#include "app/play/engine_switch.h"
 #include "app/play/i18n.h"
 #include "app/play/pumped_task.h"
 #include "app/play/system_peak.h"
@@ -390,7 +391,8 @@ bool tensorrt_backend_present(const EngineCatalog& catalog, const PlayerPaths& p
 
 // Ce qui est sur ce poste pour l'écran de bienvenue : les backends TensorRT et Core ML.
 EnginesHere engines_here(const PlayOptions& /*options*/, const PlayerPaths& paths,
-                         const EngineCatalog& catalog, std::string_view gpu_name) {
+                         const EngineCatalog& catalog, const GpuFacts& gpu) {
+  const auto& gpu_name = gpu.name;
   EnginesHere here;
   // L'architecture du GPU ne se lit (nvidia-smi) que s'il y a des fichiers tiers à choisir.
   const std::string arch = catalog.vendor_files.empty()
@@ -410,6 +412,11 @@ EnginesHere engines_here(const PlayOptions& /*options*/, const PlayerPaths& path
     if (!std::filesystem::exists(backend, error)) continue;
     const std::string file = backend.filename().string();
     here.tensorrt |= file.contains("tensorrt");
+    const auto id = engine_of_library(backend);
+    here.zml |= id == core::EngineId::Zml && backend_available(backend, gpu.vendor);
+    if ((id == core::EngineId::Hip || id == core::EngineId::Slang || id == core::EngineId::Triton) &&
+        backend_available(backend, gpu.vendor) && !std::ranges::contains(here.experimental, *id))
+      here.experimental.push_back(*id);
     here.coreml |= file.contains("coreml");
   }
   return here;

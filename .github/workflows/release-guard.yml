@@ -30,6 +30,12 @@ on:
       leger:
         type: boolean
         default: false
+      moteurs_url:
+        type: string
+        default: ""
+      moteurs_sha256:
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -42,13 +48,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        if: inputs.tag != ''
+        if: inputs.tag != '' || inputs.moteurs_url != '' || inputs.moteurs_sha256 != ''
         with:
           persist-credentials: false
           # Toute l'histoire et les étiquettes : une dérogation aux tests matériels compare l'empreinte TensorRT à
           # celle de sa préversion de référence (tools/release/hardware-waiver.sh).
           fetch-depth: 0
           fetch-tags: true
+      - name: Source des moteurs expérimentaux
+        if: inputs.moteurs_url != '' || inputs.moteurs_sha256 != ''
+        env:
+          KIRARI_PORTABLE_URL: ${{ inputs.moteurs_url }}
+          KIRARI_PORTABLE_SHA256: ${{ inputs.moteurs_sha256 }}
+        run: python3 -I tools/release/portable-assets.py source
       - name: Version de l'étiquette
         if: inputs.tag != ''
         env:

@@ -165,6 +165,7 @@ std::expected<Artifact, Refusal> TensorRtBackend::build_rife_fused(const ModelSp
     return Artifact{.cache_key = std::format("{}{}", kRifeCudaArtifact, model.sha256),
                     .path = model.onnx_path};
   }
+  if (auto runtime = ensure_tensorrt(); !runtime) return std::unexpected(std::move(runtime.error()));
   // Un moteur publié doit se désérialiser ici : sinon le constructeur le refait.
   const prepare::EngineCheck check =
       [this](const std::filesystem::path& engine) -> std::expected<void, Refusal> {

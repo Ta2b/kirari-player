@@ -102,7 +102,10 @@ std::expected<Node, Refusal> import_node(Builder& b, const onnx::Node& source, s
     return std::unexpected(
         Refusal{RefusalCode::OperatorUnknown, std::format("{}:{}", source.domain, source.op_type)});
   }
-  const auto op = op_from_onnx(source.op_type);
+  auto op = op_from_onnx(source.op_type);
+  if (op == OpKind::Cast &&
+      std::ranges::any_of(source.attributes, [](const auto& a) { return a.name == "to" && a.i == 9; }))
+    op = OpKind::ToBool;
   if (!op) return std::unexpected(Refusal{RefusalCode::OperatorUnknown, source.op_type});
   if (source.inputs.size() > op_info(*op).onnx_max_inputs) {
     return invalid(std::format("{} : {} entrées pour {}", label, source.inputs.size(), source.op_type));

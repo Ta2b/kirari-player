@@ -41,7 +41,11 @@ std::int64_t Session::display_delay_us(std::int64_t period) const {
   const std::int64_t compositor = composited_ ? period : 0;
   if (queue_full_)
     return std::int64_t{std::max(config_.swapchain_depth - 1, 0)} * period + period / 2 + compositor;
-  return stats_.render.median() + period / 2 + compositor;
+  // Le premier rendu peut compiler les shaders ou attendre l'ouverture du réseau. Une seule
+  // observation ne permet pas de prédire plusieurs périodes de composition au tour suivant.
+  const auto render =
+      stats_.render.count() < 2 ? std::min(stats_.render.latest(), period) : stats_.render.median();
+  return render + period / 2 + compositor;
 }
 
 std::int64_t Session::appear_delay_us(std::int64_t period) const {

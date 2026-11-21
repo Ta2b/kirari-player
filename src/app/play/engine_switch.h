@@ -16,6 +16,13 @@ namespace kirari::app::play {
 // Le moteur d'une bibliothèque de backend, par son nom (« kirari_backend_tensorrt.so ») ; rien
 // pour un fichier qui n'en est pas une.
 std::optional<core::EngineId> engine_of_library(const std::filesystem::path& library);
+// Le mode CUDA natif partage le module du runtime TensorRT.
+std::uint32_t cuda_inference_mode(const core::Settings& engines);
+std::optional<core::EngineId> selected_engine(const std::filesystem::path& library,
+                                              const core::Settings& settings);
+
+// Un module local et ses ressources sont présents pour ce fabricant.
+bool backend_available(const std::filesystem::path& path, GpuVendor vendor);
 // La bibliothèque d'un moteur retiré (MIGraphX, OpenVINO) laissée par une ancienne version.
 bool retired_library(const std::filesystem::path& library);
 

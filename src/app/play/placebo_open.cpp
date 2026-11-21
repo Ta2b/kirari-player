@@ -603,6 +603,14 @@ std::expected<std::unique_ptr<PlaceboScreen>, Refusal> PlaceboScreen::open(const
   if (present != PresentWanted::Open) compute.video2.pNext = present_features.head(nullptr);
   vk_params.features = &compute.features;
   std::vector<const char*> extensions(kOptionalExtensions.begin(), kOptionalExtensions.end());
+#if defined(__linux__)
+  if (std::ranges::none_of(extensions,
+                           [](std::string_view e) { return e == VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME; }))
+    extensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+  if (std::ranges::none_of(
+          extensions, [](std::string_view e) { return e == VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME; }))
+    extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+#endif
   for (const char* extension : present_extensions(present)) extensions.push_back(extension);
   vk_params.opt_extensions = extensions.data();
   vk_params.num_opt_extensions = static_cast<int>(extensions.size());

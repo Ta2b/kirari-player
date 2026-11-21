@@ -25,6 +25,8 @@
 
 namespace kirari::app::play {
 
+void log_playback_energy(const LateTelemetry& telemetry, std::int64_t frames);
+
 // Les moteurs du cache, ceux de cette lecture en tête : loaded, les moteurs que la chaîne a construits
 // (B08-12 : la variante mouvement ou le fusionné de RIFE, pas seulement le modèle tel que livré).
 std::vector<EngineBadge> engine_badges(const std::filesystem::path& cache_dir,

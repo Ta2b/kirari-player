@@ -19,7 +19,12 @@ brew install --quiet dylibbundler
 VERSION="$(sed -n 's/^  VERSION \([0-9.]*\)$/\1/p' "$ROOT/CMakeLists.txt")"
 SUFFIX=""
 case "${KIRARI_RELEASE_TAG:-}" in "v$VERSION"-*) SUFFIX="${KIRARI_RELEASE_TAG#"v$VERSION"}" ;; esac
-cmake --preset macos-release -S "$ROOT" -DKIRARI_VERSION_SUFFIX="$SUFFIX"
+zml=OFF
+[ -z "${KIRARI_ZML_BUNDLE:-}" ] || zml=ON
+slang=OFF
+[ -z "${KIRARI_SLANG_BUNDLE:-}" ] || slang=ON
+cmake --preset macos-release -S "$ROOT" -DKIRARI_WITH_ZML="$zml" -DKIRARI_ZML_BUNDLE="${KIRARI_ZML_BUNDLE:-}" \
+  -DKIRARI_WITH_SLANG="$slang" -DKIRARI_SLANG_BUNDLE="${KIRARI_SLANG_BUNDLE:-}" -DKIRARI_VERSION_SUFFIX="$SUFFIX"
 cmake --build --preset macos-release
 BUILD="$ROOT/build/macos-release"
 
@@ -58,7 +63,16 @@ cat > "$APP/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json" <<'JSON'
 }
 JSON
 
-dylibbundler -of -b -cd -d "$APP/Contents/Frameworks" -p @executable_path/../Frameworks/ \
+portable_modules=()
+if [ "$zml" = ON ]; then
+  cmake --install "$BUILD" --component zml --prefix "$APP/Contents/PlugIns"
+  portable_modules+=(-x "$APP/Contents/PlugIns/kirari_backend_zml.so" -x "$APP/Contents/PlugIns/zml/metal/lib/libzml_metal.dylib")
+fi
+if [ "$slang" = ON ]; then
+  cmake --install "$BUILD" --component slang --prefix "$APP/Contents/PlugIns"
+  portable_modules+=(-x "$APP/Contents/PlugIns/kirari_backend_slang.so")
+fi
+dylibbundler ${portable_modules[@]+"${portable_modules[@]}"} -of -b -cd -d "$APP/Contents/Frameworks" -p @executable_path/../Frameworks/ \
   -s "$KIRARI_DEPS_PREFIX/lib" -s "$KIRARI_DEPS_PREFIX/onnxruntime/lib" -s "$BREW/lib" \
   -x "$APP/Contents/MacOS/kirari" -x "$APP/Contents/PlugIns/kirari_backend_vulkan.so" \
   -x "$APP/Contents/PlugIns/kirari_backend_coreml.so" \
@@ -121,6 +135,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+if [ "$zml" = ON ]; then cmake "-Dstage=$APP" -P "$ROOT/cmake/CheckZmlPackage.cmake"; fi
 # Signature (P7.1). Sans identité, ad hoc : Gatekeeper demande une ouverture par clic droit.
 # AJP_MACOS_IDENTITY (« Developer ID Application: … », trousseau déjà importé) : signature Developer ID
 # avec le runtime durci et l'horodatage d'Apple. KIRARI_NOTARY_KEY, AJP_NOTARY_KEY_ID et AJP_NOTARY_ISSUER

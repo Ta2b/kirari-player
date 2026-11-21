@@ -6,7 +6,7 @@ documents décrivent le code actuel et lesquels sont historiques.
 ## Le produit
 
 `kirari` (Kirari Player, qui s'appelait ajp jusqu'à la 0.11 : [ADR 0016](docs/adr/0016-kirari-player.md)), un lecteur vidéo C++23 pour l'anime : agrandissement SPAN ×2 (AnimeJaNai), ou Anime4K en shaders pour
-les petites cartes ([`docs/anime4k.md`](docs/anime4k.md)), stabilisation temporelle avant SPAN (TemporalFix, TensorRT,
+les petites cartes ([`docs/anime4k.md`](docs/anime4k.md)), stabilisation temporelle avant SPAN (TemporalFix, TensorRT et ZML,
 [`docs/temporalfix.md`](docs/temporalfix.md)), interpolation (DistilDRBA v2 lite,
 RIFE 4.22 lite ou RIFE 4.25, nommés tels quels dans le menu) en mode Auto, grade HDR anime (surfaces fixes d'un plan à l'autre, marge des éclats par plan en SDR), export qui rejoue la même chaîne. Linux,
 Windows ; macOS est délaissé pour l'instant (plus construit par la CI ni par les releases, novembre 2026). Le propriétaire est Tatoub ; il écrit en français et décide des releases.
@@ -24,13 +24,16 @@ Principes tenus depuis le tri de novembre 2026 ([ADR 0012](docs/adr/0012-lecteur
   Langues, Export ; « Avancé » toujours visible en bas de chaque onglet ; un réglage s'applique en direct, en
   rechargeant la vidéo ou en relançant le lecteur, jamais « au prochain lancement » (`kPages`,
   `src/app/play/settings_panel.cpp`, `docs/ux-parametres.md`) ;
-- **moteurs** : Vulkan pour tout GPU (le seul pour AMD et Intel), TensorRT sur NVIDIA RTX, Core ML sur Mac.
+- **moteurs** : Vulkan pour tout GPU, CUDA natif et TensorRT sur NVIDIA RTX, Core ML sur Mac. HIP, Slang
+  et Triton accélèrent les graphes couverts par leur paquet de noyaux ([`docs/moteurs-portables.md`](docs/moteurs-portables.md)).
+  Le moteur ZML optionnel
+  charge le greffon PJRT de la carte. La lecture a été mesurée sur CUDA, et reste à qualifier sur ROCm,
+  oneAPI et Metal ([`docs/zml.md`](docs/zml.md)).
   MIGraphX et OpenVINO sont retirés des sources : n'en remettre aucun sans une mesure face à Vulkan
   (`docs/moteurs.md`). RIFE 4.26 et 4.25 lite restent dans le code mais ont quitté le menu en
   novembre 2026 : un ancien `play.toml` tombe sur le plus proche (`src/app/play/interp_retired.h`,
-  `docs/interpolation.md`). GMFSS union (TensorRT seulement) est revenu au menu avec ses petits réseaux par nos
-  noyaux, par défaut, quand ses deux graphes sont là (`docs/gmfss-natif.md`, `--no-gmfss-native` pour l'en
-  retirer).
+  `docs/interpolation.md`). GMFSS union est proposé avec ses deux graphes. TensorRT dispose de noyaux natifs
+  pour ses petits réseaux (`docs/gmfss-natif.md`), et ZML charge les réseaux de paire et de fusion via PJRT.
 
 ## Où est quoi
 
@@ -39,7 +42,7 @@ Principes tenus depuis le tri de novembre 2026 ([ADR 0012](docs/adr/0012-lecteur
 | `src/core` | cadence, choix des moteurs (`engines.h`), raccourcis (`keys.h`), écriture atomique (`file_sync.h`), chemins UTF-8 (`utf8_path.h`), taille et cadence de la source (`source_info.h`) ; le profil v5 ne garde que ses types |
 | `src/app/play` | le lecteur : boucle (`player.cpp`, `player_run.cpp`), chaîne en direct (`chain*.cpp`), menu (`settings_*.cpp`), réglages et `play.toml` (`settings.h`, `settings_toml.cpp`), assistant (`wizard.*`, `first_run.cpp`), traductions (`i18n_fr_*.cpp`) |
 | `src/render` | libplacebo, grade (`grade_params.*`), shaders `.hook` (`src/render/shaders/`), LUT (`cube_lut.*`) |
-| `src/gpu` | backends chargés à l'exécution : `vulkan`, `cuda` (TensorRT), `coreml` |
+| `src/gpu` | backends chargés à l'exécution : `vulkan`, `cuda` (CUDA natif et TensorRT), `zml` (PJRT), `coreml`, `hip`, `slang`, `triton` |
 | `src/av`, `src/media`, `src/audio`, `src/subs`, `src/export`, `src/prepare`, `src/kernels` | voir `docs/ARCHITECTURE.md` |
 | `tests/unit/<module>` | Catch2, un exécutable par module |
 | `tools/` | dépendances (`deps`), paquets (`release`), bancs, scripts de modèles |

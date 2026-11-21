@@ -31,6 +31,12 @@ on:
         description: "Release rapide : compilation et publication seulement (ni CI exigée, ni règles, ni tests, ni fumée)"
         type: boolean
         default: false
+      moteurs_url:
+        description: "URL HTTPS de l’archive des moteurs expérimentaux (avec moteurs_sha256)"
+        type: string
+      moteurs_sha256:
+        description: "SHA-256 de l’archive des moteurs expérimentaux"
+        type: string
 
 # Les releases vivent dans ce dépôt (KIRARI_RELEASE_REPO), écrites avec AJP_RELEASE_TOKEN seul : le jeton du workflow ne sert
 # qu'à lire (B51-12).
@@ -49,6 +55,8 @@ jobs:
     with:
       tag: ${{ inputs.tag || github.ref_name }}
       sans_tests: ${{ inputs.sans_tests == true }}
+      moteurs_url: ${{ inputs.moteurs_url || '' }}
+      moteurs_sha256: ${{ inputs.moteurs_sha256 || '' }}
     secrets: inherit
 
   windows:
@@ -56,6 +64,8 @@ jobs:
     with:
       tag: ${{ inputs.tag || github.ref_name }}
       sans_tests: ${{ inputs.sans_tests == true }}
+      moteurs_url: ${{ inputs.moteurs_url || '' }}
+      moteurs_sha256: ${{ inputs.moteurs_sha256 || '' }}
     secrets: inherit
 
   publish:

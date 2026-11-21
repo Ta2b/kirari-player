@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "tensor.glsl"
+layout(local_size_x=16, local_size_y=16) in;
+layout(std430,binding=0) readonly buffer Source { KIRARI_TENSOR v[]; } src;
+layout(std430,binding=1) readonly buffer Sums { float v[]; } sums;
+layout(std430,binding=2) writeonly buffer Output { KIRARI_TENSOR v[]; } dst;
+layout(std430,binding=3) readonly buffer Instant { float s; } instant;
+layout(push_constant) uniform Push { ivec2 size; uint channels; uint pull; } pc;
+vec4 cubic(float t) {
+  float t2=t*t, t3=t2*t;
+  return vec4(-0.5*t3+t2-0.5*t, 1.5*t3-2.5*t2+1.0, -1.5*t3+2*t2+0.5*t, 0.5*t3-0.5*t2);
+}
+float sample_source(uint base,vec2 uv) {
+  uv=clamp(uv,vec2(0),vec2(pc.size-1));
+  ivec2 p=ivec2(uv);
+  vec4 wx=cubic(fract(uv.x)), wy=cubic(fract(uv.y));
+  float sum=0.0, lo=3.4e38, hi=-3.4e38;
+  for (int j=0;j<4;++j) {
+    float row=0.0;
+    for (int i=0;i<4;++i) {
+      ivec2 q=clamp(p+ivec2(i-1,j-1),ivec2(0),pc.size-1);
+      float v=float(src.v[base+q.y*pc.size.x+q.x]);
+      row+=v*wx[i];
+      if (i>=1 && i<=2 && j>=1 && j<=2) { lo=min(lo,v); hi=max(hi,v); }
+    }
+    sum+=row*wy[j];
+  }
+  return clamp(sum,lo,hi);
+}
+void main() {
+  ivec2 p=ivec2(gl_GlobalInvocationID.xy);
+  if(any(greaterThanEqual(p,pc.size))) return;
+  uint c=gl_GlobalInvocationID.z, area=pc.size.x*pc.size.y, n=p.y*pc.size.x+p.x;
+  float weights=sums.v[(pc.pull!=0u?2u:pc.channels)*area+n];
+  float denom=weights+1e-7;
+  float v;
+  if(c==pc.channels) v=weights/denom;
+  else if(pc.pull==0u) v=sums.v[c*area+n]/denom;
+  else v=sample_source(c*area,vec2(p)-instant.s*vec2(sums.v[n],sums.v[area+n])/denom);
+  dst.v[c*area+n]=KIRARI_TENSOR(v);
+}

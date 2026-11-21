@@ -27,6 +27,7 @@
 #include "gpu/cuda/backend/span_fp8_engine.h"
 #include "gpu/cuda/backend/tfix_fused_engine.h"
 #include "gpu/cuda/backend/trt_engine.h"
+#include "gpu/cuda_mode.h"
 #include "gpu/gmfss_trials.h"
 #include "gpu/rife_trials.h"
 #include "prepare/builder.h"
@@ -147,41 +148,38 @@ class CudaTensorBuffer final : public TensorBuffer {
 
 }  // namespace
 
+void TensorRtBackend::configure_trials(std::uint32_t trials) {
+  packed_warp_ = (trials & kTrialPackedWarp) != 0;
+  l2_keep_ = (trials & kTrialL2Keep) != 0;
+  rife_hwc8_ = (trials & kTrialRifeHwc8) != 0;
+  warp_l2_ = (trials & kTrialWarpL2) != 0;
+  cuda_native_mode_ = (trials & kCudaNativeInference) != 0;
+  tensorrt_only_ = (trials & kTensorRtInference) != 0;
+  span_native_ = !tensorrt_only_ && (trials & kTrialSpanNative) != 0;
+  rife_native_ = !tensorrt_only_ && (trials & kTrialRifeNative) != 0;
+  rife_cuda_direct_ = !tensorrt_only_ && (cuda_native_mode_ || (trials & kRifeCudaDirect) != 0);
+  gmfss_native_ = !tensorrt_only_ && (trials & kTrialGmfssNative) != 0;
+  gmfss_feature_reuse_ = (trials & kTrialGmfssFeatureReuse) != 0;
+  gmflow_fast_ = (trials & kTrialGmflowFast) != 0;
+  gmfss_direct_splats_ = (trials & kTrialGmfssDirectSplats) != 0;
+  sharp1_winograd_ = (trials & kDisableSharp1Winograd) == 0;
+  drba_native_tail_ = !tensorrt_only_ && (trials & kDisableDrbaNativeTail) == 0;
+  gmfss_folded_tail_ = !tensorrt_only_ && (trials & kDisableGmfssFoldedTail) == 0;
+  span_fp8_native_blocks_ = !tensorrt_only_ && (trials & kTrialSpanFp8NativeBlocks) != 0;
+  tfix_native_ = !tensorrt_only_ && (trials & kTrialTfixNative) != 0;
+  nvof_roundtrip_ = (trials & kTrialNvofRoundtrip) != 0;
+  nvof_glow_ = (trials & kTrialNvofGlow) != 0;
+}
+
 std::expected<std::unique_ptr<TensorRtBackend>, Refusal> TensorRtBackend::create(
-    const BackendInit& init, std::filesystem::path trtexec) {
+    const BackendInit& init, TrtexecLocator locate_trtexec) {
   std::unique_ptr<TensorRtBackend> backend(new TensorRtBackend());
   backend->log_ = init.log;
   backend->cache_dir_ = init.cache_dir;
   backend->filtered_warp_ = init.filtered_warp;
-  backend->packed_warp_ = (init.trials & kTrialPackedWarp) != 0;
-  backend->l2_keep_ = (init.trials & kTrialL2Keep) != 0;
-  backend->rife_hwc8_ = (init.trials & kTrialRifeHwc8) != 0;
-  backend->warp_l2_ = (init.trials & kTrialWarpL2) != 0;
-  backend->span_native_ = (init.trials & kTrialSpanNative) != 0;
-  backend->rife_native_ = (init.trials & kTrialRifeNative) != 0;
-  backend->rife_cuda_direct_ = (init.trials & kRifeCudaDirect) != 0;
-  backend->gmfss_native_ = (init.trials & kTrialGmfssNative) != 0;
-  backend->gmfss_feature_reuse_ = (init.trials & kTrialGmfssFeatureReuse) != 0;
-  backend->gmflow_fast_ = (init.trials & kTrialGmflowFast) != 0;
-  backend->gmfss_direct_splats_ = (init.trials & kTrialGmfssDirectSplats) != 0;
-  backend->sharp1_winograd_ = (init.trials & kDisableSharp1Winograd) == 0;
-  backend->drba_native_tail_ = (init.trials & kDisableDrbaNativeTail) == 0;
-  backend->gmfss_folded_tail_ = (init.trials & kDisableGmfssFoldedTail) == 0;
-  backend->span_fp8_native_blocks_ = (init.trials & kTrialSpanFp8NativeBlocks) != 0;
-  backend->tfix_native_ = (init.trials & kTrialTfixNative) != 0;
-  backend->nvof_roundtrip_ = (init.trials & kTrialNvofRoundtrip) != 0;
-  backend->nvof_glow_ = (init.trials & kTrialNvofGlow) != 0;
-  backend->trtexec_ = std::move(trtexec);
-  if (!backend->trtexec_.empty()) {
-    // Son empreinte d'ouverture, revérifiée avant chaque construction (A05-05).
-    if (auto sha = prepare::sha256_file_known(backend->trtexec_)) backend->trtexec_sha256_ = std::move(*sha);
-    if (backend->trtexec_ == std::filesystem::path(KIRARI_TRTEXEC_PATH)) {
-      backend->log(BackendLogLevel::Warn,
-                   std::format("trtexec du paquet absent ou d'empreinte inattendue : celui du poste de "
-                               "développement ({}) construit les moteurs",
-                               core::to_utf8(backend->trtexec_)));
-    }
-  }
+  backend->configure_trials(init.trials);
+  backend->locate_trtexec_ = locate_trtexec;
+  if (!backend->cuda_native_mode_) backend->find_trtexec();
   int count = 0;
   if (auto ok = cuda_check(cudaGetDeviceCount(&count), "cudaGetDeviceCount"); !ok) {
     // C31-04 : le pilote trop ancien et l'absence de carte gardent leur code ; le reste dit un composant
@@ -239,18 +237,42 @@ std::expected<std::unique_ptr<TensorRtBackend>, Refusal> TensorRtBackend::create
                           std::make_unique<GpuTiming>("SPAN, attente de l'emplacement de l'anneau", nullptr),
                           std::make_unique<GpuTiming>("SPAN, queue (to_pixel, anneau)", nullptr)};
   backend->chain_span_ = std::make_unique<GpuSpan>("source jusqu'à son SPAN");
-  backend->trt_log_ = std::make_unique<TrtLog>(init.log);
-  backend->runtime_.reset(nvinfer1::createInferRuntime(*backend->trt_log_));
-  if (!backend->runtime_)
-    return refuse(RefusalCode::LibraryUnavailable, "nvinfer1::createInferRuntime a échoué");
-  backend->log(BackendLogLevel::Info,
-               std::format("TensorRT {} sur {} (sm {}.{}), {} voie{} de calcul", getInferLibVersion(),
-                           backend->properties_.name, backend->properties_.major, backend->properties_.minor,
-                           backend->lanes_, backend->lanes_ > 1 ? "s" : ""));
+  if (backend->cuda_native_mode_) {
+    backend->log(BackendLogLevel::Info,
+                 std::format("CUDA natif sur {} (sm {}.{}), {} voie(s) de calcul", backend->properties_.name,
+                             backend->properties_.major, backend->properties_.minor, backend->lanes_));
+  } else if (auto runtime = backend->ensure_tensorrt(); !runtime) {
+    return std::unexpected(std::move(runtime.error()));
+  }
 #ifdef _WIN32
   backend->log(BackendLogLevel::Info, hags_state());
 #endif
   return backend;
+}
+
+std::expected<nvinfer1::IRuntime*, Refusal> TensorRtBackend::ensure_tensorrt() {
+  if (runtime_) return runtime_.get();
+  if (auto ok = bind(); !ok) return std::unexpected(std::move(ok.error()));
+  trt_log_ = std::make_unique<TrtLog>(log_);
+  runtime_.reset(nvinfer1::createInferRuntime(*trt_log_));
+  if (!runtime_) return refuse(RefusalCode::LibraryUnavailable, "nvinfer1::createInferRuntime a échoué");
+  log(BackendLogLevel::Info,
+      std::format("TensorRT {} sur {} (sm {}.{}), {} voie{} de calcul", getInferLibVersion(),
+                  properties_.name, properties_.major, properties_.minor, lanes_, lanes_ > 1 ? "s" : ""));
+  return runtime_.get();
+}
+
+void TensorRtBackend::find_trtexec() {
+  if (!trtexec_.empty() || locate_trtexec_ == nullptr) return;
+  trtexec_ = locate_trtexec_();
+  if (trtexec_.empty()) return;
+  // Son empreinte d'ouverture, revérifiée avant chaque construction (A05-05).
+  if (auto sha = prepare::sha256_file_known(trtexec_)) trtexec_sha256_ = std::move(*sha);
+  if (trtexec_ == std::filesystem::path(KIRARI_TRTEXEC_PATH))
+    log(BackendLogLevel::Warn,
+        std::format("trtexec du paquet absent ou d'empreinte inattendue : celui du poste de "
+                    "développement ({}) construit les moteurs",
+                    core::to_utf8(trtexec_)));
 }
 
 namespace {
@@ -356,19 +378,21 @@ void TensorRtBackend::log(BackendLogLevel level, std::string_view message) const
 
 BackendCaps TensorRtBackend::capabilities() const {
   return BackendCaps{
-      .name = "tensorrt",
+      .name = cuda_native_mode_ ? "cuda" : "tensorrt",
       .device_name = properties_.name,
       .driver_version = std::format("CUDA {}.{}", driver_version_ / 1000, driver_version_ % 1000 / 10),
       .needs_host_sync = false,
       .fp16 = true,
       .int8 = true,  // graphes Q/DQ (SPAN INT8, span_int8.h) : Turing et après
       .fp8 = fp8_allowed(properties_.major, properties_.minor),  // Ada et Hopper ; RTX 50 sans mesure, non
-      .span_fp8_cutlass = SpanFp8Net::supported_device(properties_.major, properties_.minor),
-      .span_fp16_cutlass = SpanFp8Net::supported_fp16_device(properties_.major, properties_.minor),
+      .span_fp8_cutlass =
+          !tensorrt_only_ && SpanFp8Net::supported_device(properties_.major, properties_.minor),
+      .span_fp16_cutlass =
+          !tensorrt_only_ && SpanFp8Net::supported_fp16_device(properties_.major, properties_.minor),
       .gpu_arch = std::format("sm_{}{}", properties_.major, properties_.minor),
       .span_fp8_kernels = SpanFp8Net::kKernelsVersion,
-      .rife_fused = true,
-      .drba_fused = true,
+      .rife_fused = !tensorrt_only_,
+      .drba_fused = !tensorrt_only_,
       .gmfss = true,
       .matrix_units = true,
       .lanes = lanes_,
@@ -381,7 +405,8 @@ DeviceMatch TensorRtBackend::match(const DeviceUuid& render_device) const {
   return render_device == uuid_ ? DeviceMatch::Same : DeviceMatch::Different;
 }
 
-prepare::TrtexecConfig TensorRtBackend::trtexec_config() const {
+prepare::TrtexecConfig TensorRtBackend::trtexec_config() {
+  find_trtexec();
   return prepare::TrtexecConfig{
       .trtexec = trtexec_,
       .cache_dir = cache_dir_,
@@ -404,18 +429,18 @@ prepare::TrtexecConfig TensorRtBackend::trtexec_config() const {
 
 std::expected<Artifact, Refusal> TensorRtBackend::build(const ModelSpec& model, const ShapeSet& shapes,
                                                         Progress& progress) {
-  // Une variante du SPAN en paquet de poids FP8 : pas de trtexec, les noyaux CUTLASS la lisent telle quelle.
-  if (is_span_fp8_package(model.onnx_path)) return build_span_fp8(model, shapes);
-  // RIFE coupé en six morceaux : six constructions, un seul artefact.
-  if (prepare::is_rife_fused_manifest(model.onnx_path)) return build_rife_fused(model, shapes, progress);
-  // DistilDRBA coupé en quatre morceaux : quatre constructions, un seul artefact.
-  if (prepare::is_drba_fused_manifest(model.onnx_path)) return build_drba_fused(model, shapes, progress);
-  // TemporalFix coupé en morceaux : l'encodeur ou la fenêtre.
-  if (prepare::is_tfix_fused_manifest(model.onnx_path)) return build_tfix_fused(model, shapes, progress);
-  // La fusion de GMFSS coupée pour le GridNet natif : la fusion entière et son IFNet.
-  if (prepare::is_gmfss_fused_manifest(model.onnx_path)) return build_gmfss_fused(model, shapes, progress);
-  // La paire de GMFSS coupée pour le FeatureNet et le MetricNet natifs : la paire entière et son flot.
-  if (prepare::is_gmfss_pair_manifest(model.onnx_path)) return build_gmfss_pair(model, shapes, progress);
+  if (!tensorrt_only_) {
+    // Le SPAN natif et RIFE direct lisent leurs poids, sans moteur TensorRT.
+    if (is_span_fp8_package(model.onnx_path)) return build_span_fp8(model, shapes);
+    if (prepare::is_rife_fused_manifest(model.onnx_path)) return build_rife_fused(model, shapes, progress);
+  }
+  if (auto runtime = ensure_tensorrt(); !runtime) return std::unexpected(std::move(runtime.error()));
+  if (!tensorrt_only_) {
+    if (prepare::is_drba_fused_manifest(model.onnx_path)) return build_drba_fused(model, shapes, progress);
+    if (prepare::is_tfix_fused_manifest(model.onnx_path)) return build_tfix_fused(model, shapes, progress);
+    if (prepare::is_gmfss_fused_manifest(model.onnx_path)) return build_gmfss_fused(model, shapes, progress);
+    if (prepare::is_gmfss_pair_manifest(model.onnx_path)) return build_gmfss_pair(model, shapes, progress);
+  }
   // Pas de vérification ici : désérialiser le plan sur le GPU juste après sa construction, pour le jeter et
   // le charger de nouveau à l'ouverture, coûtait un chargement de trop (C05-03). Un plan refusé à ce
   // chargement est mis de côté et reconstruit par le lecteur (player_engines.cpp, Artifact::reused, C05-01).
@@ -424,16 +449,22 @@ std::expected<Artifact, Refusal> TensorRtBackend::build(const ModelSpec& model, 
 
 std::expected<std::unique_ptr<Engine>, Refusal> TensorRtBackend::load(const Artifact& artifact) {
   if (auto ok = bind(); !ok) return std::unexpected(ok.error());
-  if (span_fp8_artifact_shape(artifact.cache_key)) return load_span_fp8(artifact);
-  if (artifact.cache_key.starts_with(kRifeCudaArtifact)) return load_rife_cuda(artifact);
-  if (rife_fused_artifact_key_parse(artifact.cache_key)) return load_rife_fused(artifact);
-  if (drba_fused_artifact_key_parse(artifact.cache_key)) return load_drba_fused(artifact);
-  if (tfix_fused_artifact_key_parse(artifact.cache_key)) return load_tfix_fused(artifact);
-  if (gmfss_fused_artifact_key_parse(artifact.cache_key)) return load_gmfss_fused(artifact);
-  if (gmfss_pair_artifact_key_parse(artifact.cache_key)) return load_gmfss_pair(artifact);
+  if (!tensorrt_only_) {
+    if (span_fp8_artifact_shape(artifact.cache_key)) return load_span_fp8(artifact);
+    if (artifact.cache_key.starts_with(kRifeCudaArtifact)) return load_rife_cuda(artifact);
+  }
+  auto runtime = ensure_tensorrt();
+  if (!runtime) return std::unexpected(std::move(runtime.error()));
+  if (!tensorrt_only_) {
+    if (rife_fused_artifact_key_parse(artifact.cache_key)) return load_rife_fused(artifact);
+    if (drba_fused_artifact_key_parse(artifact.cache_key)) return load_drba_fused(artifact);
+    if (tfix_fused_artifact_key_parse(artifact.cache_key)) return load_tfix_fused(artifact);
+    if (gmfss_fused_artifact_key_parse(artifact.cache_key)) return load_gmfss_fused(artifact);
+    if (gmfss_pair_artifact_key_parse(artifact.cache_key)) return load_gmfss_pair(artifact);
+  }
   // Les activations dans la zone de la voie choisie avant le chargement (use_lane) ; un moteur
   // lancé sur l'autre voie y passe à son lancement.
-  auto engine = TrtEngine::load(*runtime_, artifact.path, arena());
+  auto engine = TrtEngine::load(**runtime, artifact.path, arena());
   if (!engine) return std::unexpected(std::move(engine.error()));
   return std::unique_ptr<Engine>(std::move(*engine));
 }

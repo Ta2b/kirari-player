@@ -15,7 +15,7 @@ using namespace detail;
 constexpr std::size_t kMany = 4096;  // Concat, Split : borne de l'arité variable
 
 // Une ligne par OpKind, dans l'ordre de l'énumération (vérifié par op_info).
-constexpr std::array<OpInfo, 35> kOps{{
+constexpr std::array<OpInfo, 60> kOps{{
     {OpKind::Conv, "Conv", 2, 3, 5, 1, 1, infer_conv, eval_conv},
     {OpKind::ConvTranspose, "ConvTranspose", 2, 3, 3, 1, 1, infer_conv_transpose, eval_conv_transpose},
     {OpKind::Add, "Add", 2, 2, 2, 1, 1, infer_binary, eval_binary},
@@ -51,6 +51,31 @@ constexpr std::array<OpInfo, 35> kOps{{
     {OpKind::Range, "Range", 3, 3, 3, 1, 1, infer_range, eval_range},
     {OpKind::FakeQuantE4M3, "FakeQuantE4M3", 2, 2, 2, 1, 1, infer_fake_quant, eval_fake_quant},
     {OpKind::FakeQuantInt8, "FakeQuantInt8", 2, 2, 2, 1, 1, infer_fake_quant, eval_fake_quant},
+    {OpKind::Abs, "Abs", 1, 1, 1, 1, 1, infer_unary, eval_unary},
+    {OpKind::ReduceSum, "ReduceSum", 1, 2, 2, 1, 1, infer_reduce_mean, eval_reduce_mean},
+    {OpKind::ReduceL2, "ReduceL2", 1, 2, 2, 1, 1, infer_reduce_mean, eval_reduce_mean},
+    {OpKind::CumSum, "CumSum", 2, 2, 2, 1, 1, infer_scan, eval_scan},
+    {OpKind::ConstantOfShape, "ConstantOfShape", 1, 1, 1, 1, 1, infer_fill, eval_fill},
+    {OpKind::Expand, "Expand", 2, 2, 2, 1, 1, infer_expand, eval_expand},
+    {OpKind::Equal, "Equal", 2, 2, 2, 1, 1, infer_binary, eval_binary},
+    {OpKind::Where, "Where", 3, 3, 3, 1, 1, infer_where, eval_where},
+    {OpKind::Neg, "Neg", 1, 1, 1, 1, 1, infer_unary, eval_unary},
+    {OpKind::Sin, "Sin", 1, 1, 1, 1, 1, infer_unary, eval_unary},
+    {OpKind::Cos, "Cos", 1, 1, 1, 1, 1, infer_unary, eval_unary},
+    {OpKind::Erf, "Erf", 1, 1, 1, 1, 1, infer_unary, eval_unary},
+    {OpKind::Pow, "Pow", 2, 2, 2, 1, 1, infer_binary, eval_binary},
+    {OpKind::Greater, "Greater", 2, 2, 2, 1, 1, infer_binary, eval_binary},
+    {OpKind::GreaterEqual, "GreaterOrEqual", 2, 2, 2, 1, 1, infer_binary, eval_binary},
+    {OpKind::Less, "Less", 2, 2, 2, 1, 1, infer_binary, eval_binary},
+    {OpKind::LogicalAnd, "And", 2, 2, 2, 1, 1, infer_binary, eval_binary},
+    {OpKind::LogicalNot, "Not", 1, 1, 1, 1, 1, infer_unary, eval_unary},
+    {OpKind::ToBool, "CastToBool", 1, 1, 1, 1, 1, infer_unary, eval_unary},
+    {OpKind::Tile, "Tile", 2, 2, 2, 1, 1, infer_tile, eval_tile},
+    {OpKind::MatMul, "MatMul", 2, 2, 2, 1, 1, infer_matmul, eval_matmul},
+    {OpKind::Softmax, "Softmax", 1, 1, 1, 1, 1, infer_norm, eval_norm},
+    {OpKind::LayerNorm, "LayerNormalization", 2, 3, 3, 1, 1, infer_norm, eval_norm},
+    {OpKind::InstanceNorm, "InstanceNormalization", 3, 3, 3, 1, 1, infer_norm, eval_norm},
+    {OpKind::ScatterND, "ScatterND", 3, 3, 3, 1, 1, infer_scatter_nd, eval_scatter_nd},
 }};
 
 constexpr bool table_in_order() {

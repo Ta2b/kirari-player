@@ -12,6 +12,15 @@
     }
   ],
   "features": {
+    "slang": {
+      "description": "Bibliothèque d’import Vulkan pour le moteur Slang sous Windows",
+      "dependencies": [
+        {
+          "name": "vulkan-loader",
+          "platform": "windows"
+        }
+      ]
+    },
     "tests": {
       "description": "Tests unitaires",
       "dependencies": [

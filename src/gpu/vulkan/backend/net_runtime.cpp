@@ -29,6 +29,13 @@ std::unexpected<Refusal> cache_refusal(std::string text) {
 
 }  // namespace
 
+std::filesystem::path artifact_lock_path(const std::filesystem::path& artifact) {
+  auto lock = std::filesystem::path(".");
+  lock += artifact.filename();
+  lock += ".key-lock";
+  return artifact.parent_path() / lock;
+}
+
 std::expected<void, Refusal> write_io_names(const std::filesystem::path& artifact,
                                             std::span<const std::string> inputs,
                                             std::span<const std::string> outputs) {
@@ -133,7 +140,8 @@ std::expected<void, Refusal> copy_converted(const std::byte* from, TensorType fr
                                  .detail = "conversion entre types entiers de tenseurs"});
 }
 
-std::expected<IoNames, Refusal> onnx_io_names(const std::filesystem::path& onnx) {
+std::expected<IoNames, Refusal> onnx_io_names(const std::filesystem::path& onnx,
+                                              std::vector<InputShape>* declared) {
   auto bytes = read_file(onnx);
   if (!bytes) return std::unexpected(bytes.error());
   auto model = ir::onnx::read_onnx(*bytes);
@@ -143,7 +151,9 @@ std::expected<IoNames, Refusal> onnx_io_names(const std::filesystem::path& onnx)
   for (const auto& w : model->graph.initializers) weights.insert(w.name);
   IoNames names;
   for (const auto& v : model->graph.inputs) {
-    if (!weights.contains(v.name)) names.inputs.push_back(v.name);
+    if (weights.contains(v.name)) continue;
+    names.inputs.push_back(v.name);
+    if (declared != nullptr) declared->push_back({v.name, v.dims});
   }
   for (const auto& v : model->graph.outputs) names.outputs.push_back(v.name);
   return names;

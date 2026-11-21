@@ -125,9 +125,14 @@ std::expected<void, Refusal> NetEngine::prepare(PipelineCache& pipelines) {
     if (!scratch) return std::unexpected(scratch.error());
     scratch_ = std::move(*scratch);
   }
+  return prepare_pipelines(pipelines);
+}
 
-  for (const Dispatch& d : program_.dispatches) {
-    const std::span<const std::uint32_t> words = spirv::words(d.shader);
+std::expected<void, Refusal> NetEngine::prepare_pipelines(PipelineCache& pipelines) {
+  for (Dispatch& d : program_.dispatches) {
+    auto words =
+        options_.specialize ? options_.specialize(d, options_.target) : std::span<const std::uint32_t>{};
+    if (words.empty()) words = spirv::words(d.shader);
     if (words.empty()) {
       return std::unexpected(Refusal{RefusalCode::FeatureUnavailable,
                                      std::format("shader {} absent du moteur Vulkan", d.shader)});

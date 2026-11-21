@@ -1,13 +1,13 @@
 // GMFSS Fortuna Union dans la chaîne (upscale_gmfss.cpp) : ses deux graphes trouvés à côté de RIFE, fixés aux
 // plans remplis de la lecture, construits puis chargés. Le mélange (niveau Élevé : RIFE 4.26 et GMFSS au
-// milieu des paires fortes) à la taille où RIFE mesure ; GMFSS seul à la taille de travail. TensorRT
-// seulement (BackendCaps::gmfss : GMFlow et ses transformeurs). Un refus laisse RIFE seul, la raison au
-// journal, retenu pour la séance (C08-12).
+// milieu des paires fortes) à la taille où RIFE mesure ; GMFSS seul à la taille de travail.
+// Un refus est retenu pour la séance (C08-12). RIFE reste en service dans le mélange.
 #include <algorithm>
 #include <cmath>
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -18,6 +18,8 @@
 #include "app/play/paths.h"
 #include "core/log.h"
 #include "core/utf8_path.h"
+#include "gpu/cuda_mode.h"
+#include "gpu/rife_trials.h"
 #include "kernels/spec/gmfss.h"
 #include "kernels/spec/rife.h"
 #include "prepare/gmfss_fused.h"
@@ -105,92 +107,114 @@ GmfssUse gmfss_wanted(const PlaySettings& settings) {
                                                                                : GmfssUse::Off;
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-std::optional<bool> load_gmfss(Player& p, const gpu::BackendInit& init, ChainEngines& c,
-                               const PlaySettings& settings, InnerFallbacks& inner,
-                               const std::string& library) {
-  const GmfssUse use = gmfss_wanted(settings);
-  if (use == GmfssUse::Off) return true;
-  const auto log = log_channel("app");
-  const char* const without = use == GmfssUse::Only ? "RIFE à la place" : "RIFE seul";
-  if (use == GmfssUse::Middle && !c.rife_motion) {
-    log->warn("GMFSS au milieu des paires fortes : RIFE mouvement absent, {}", without);
-    return true;
-  }
-  if (!c.backend->capabilities().gmfss) {
-    log->warn("GMFSS union : le moteur {} ne le fait pas tourner (TensorRT seulement), {}", c.backend_name,
-              without);
-    return true;
-  }
-  // Un ancien export peut rester dans un dossier personnel devant les modèles neufs du paquet.
-  std::string dropped;
-  const auto usable = find_usable_gmfss(c.model_places, settings.gmfss_half_flow, dropped);
-  if (!usable) {
-    log->warn("GMFSS union refusé ({}) : {}", usable.error().detail, without);
-    return true;
-  }
-  if (settings.gmfss_half_flow && usable->half_pair.empty())
-    log->warn("GMFSS union : {} introuvable, la paire au flot entier", kGmfssHalfPairFile);
-  if (!dropped.empty())
-    log->warn("GMFSS union : {} ; {} à sa place", dropped, core::to_utf8(usable->pair.filename()));
-  const GmfssModels& chosen = *usable;
-  const WorkSize size = use == GmfssUse::Only ? c.work : c.rife_size;
-  const kernels::RifeGeometry g = kernels::rife_geometry(size.width, size.height, kernels::kGmfssAlign);
-  const bool cuda_direct = settings.experimental.rife_cuda_direct;
-  const std::string key =
-      inner_key(cuda_direct ? "gmfss-cuda" : "gmfss", library, chosen.pair, g.padded_width, g.padded_height);
-  if (inner.refused(ChainStage::Motion, key) != nullptr) {
-    log->info("GMFSS union refusé plus tôt dans la séance : {}", without);
-    return true;
-  }
-  const auto refused = [&](const Refusal& refusal) {
-    log->warn("GMFSS union refusé ({}) : {}", refusal.detail, without);
-    inner.failed(ChainStage::Motion, key, refusal);
-    return true;
-  };
-  auto fixed = static_gmfss(chosen, g.padded_width, g.padded_height, paths::derived_models(p.paths));
-  if (!fixed) return refused(fixed.error());
-  // Les deux graphes sans pavage L2 ni niveau 5 (gpu::ModelSpec::tuned). first_s : la durée annoncée tant
-  // qu'aucune construction passée ne la donne, mesurée sur une RTX 4070 Ti en travail 720p.
+namespace {
+
+struct GmfssNetworks {
+  std::unique_ptr<gpu::Engine> pair;
+  std::unique_ptr<gpu::Engine> fusion;
+};
+
+std::expected<std::optional<GmfssNetworks>, Refusal> build_gmfss(Player& p, const gpu::BackendInit& init,
+                                                                 gpu::Backend& backend,
+                                                                 const GmfssModels& models,
+                                                                 const kernels::RifeGeometry& g,
+                                                                 bool direct) {
   const auto build = [&](const std::filesystem::path& model, const gpu::Shape& shape, std::string name,
                          gpu::Lane lane, double first_s) {
-    return prepare_engine(p, init, *c.backend, model, shape,
+    return prepare_engine(p, init, backend, model, shape,
                           EngineLabel{.name = std::move(name),
                                       .model = core::to_utf8(model.stem()),
                                       .width = static_cast<int>(shape.dims[3]),
                                       .height = static_cast<int>(shape.dims[2]),
-                                      .first_build_s = cuda_direct ? 1.0 : first_s,
+                                      .first_build_s = direct ? 1.0 : first_s,
                                       .tuned = false},
                           lane);
   };
-  if (cuda_direct || p.options.gmfss_native) {
-    if (auto manifests = select_gmfss_manifests(*fixed, g.padded_height / 2, g.padded_width / 2, cuda_direct);
-        !manifests)
-      return refused(manifests.error());
-  }
   auto pair =
-      build(fixed->pair, gpu::Shape{.dims = {1, kernels::kGmfssFramePlanes, g.padded_height, g.padded_width}},
+      build(models.pair, gpu::Shape{.dims = {1, kernels::kGmfssFramePlanes, g.padded_height, g.padded_width}},
             i18n::tr("GMFSS (pair)"), gpu::Lane::Pair, kGmfssPairFirstBuildS);
-  if (!pair) return refused(pair.error());
+  if (!pair) return std::unexpected(std::move(pair.error()));
   if (!*pair) return std::nullopt;
-  auto fusion = build(fixed->fusion, gpu::Shape{.dims = {1, 3, g.padded_height / 2, g.padded_width / 2}},
+  auto fusion = build(models.fusion, gpu::Shape{.dims = {1, 3, g.padded_height / 2, g.padded_width / 2}},
                       i18n::tr("GMFSS (fusion)"), gpu::Lane::Interpolate, kGmfssFusionFirstBuildS);
-  if (!fusion) return refused(fusion.error());
+  if (!fusion) return std::unexpected(std::move(fusion.error()));
   if (!*fusion) return std::nullopt;
-  c.gmfss_pair = std::move(**pair);
-  c.gmfss_fusion = std::move(**fusion);
-  configure_gmfss(c, settings, p.options, chosen, size, use);
+  return GmfssNetworks{.pair = std::move(**pair), .fusion = std::move(**fusion)};
+}
+
+std::expected<std::optional<GmfssNetworks>, Refusal> build_gmfss_selected(
+    Player& p, const gpu::BackendInit& init, ChainEngines& c, const GmfssModels& fixed,
+    const kernels::RifeGeometry& g, bool direct) {
+  const bool hybrid = p.options.gmfss_native && gpu::is_cuda_backend(c.backend_name) &&
+                      (init.trials & gpu::kTensorRtInference) == 0;
+  if (direct || hybrid) {
+    GmfssModels cut = fixed;
+    auto manifests = select_gmfss_manifests(cut, g.padded_height / 2, g.padded_width / 2, direct);
+    auto loaded = manifests ? build_gmfss(p, init, *c.backend, cut, g, direct)
+                            : std::unexpected(std::move(manifests.error()));
+    if (loaded || watch_now(loaded.error()) || preparation_stopped(loaded.error())) {
+      c.gmfss_cuda_direct = direct && loaded && loaded->has_value();
+      return loaded;
+    }
+    log_channel("app")->warn("GMFSS union natif indisponible ({}) : mêmes graphes GMFSS sous TensorRT",
+                             loaded.error().detail);
+  }
+  return build_gmfss(p, init, *c.backend, fixed, g, false);
+}
+
+std::expected<bool, Refusal> load_gmfss(Player& p, const gpu::BackendInit& init, ChainEngines& c,
+                                        const PlaySettings& settings, InnerFallbacks& inner,
+                                        const std::string& library, GmfssUse use) {
+  if (!c.backend->capabilities().gmfss)
+    return std::unexpected(
+        Refusal{RefusalCode::FeatureUnavailable,
+                std::format("GMFSS union indisponible pour le moteur {}", c.backend_name)});
+  std::string dropped;
+  const auto usable = find_usable_gmfss(c.model_places, settings.gmfss_half_flow, dropped);
+  if (!usable) return std::unexpected(usable.error());
+  const auto log = log_channel("app");
+  if (settings.gmfss_half_flow && usable->half_pair.empty())
+    log->warn("GMFSS union : {} introuvable, la paire au flot entier", kGmfssHalfPairFile);
+  if (!dropped.empty())
+    log->warn("GMFSS union : {} ; {} à sa place", dropped, core::to_utf8(usable->pair.filename()));
+  const WorkSize size = use == GmfssUse::Only ? c.work : c.rife_size;
+  const kernels::RifeGeometry g = kernels::rife_geometry(size.width, size.height, kernels::kGmfssAlign);
+  const bool direct = gpu::is_cuda_backend(c.backend_name) && (init.trials & gpu::kRifeCudaDirect) != 0;
+  const std::string key = inner_key("gmfss", library, usable->pair, g.padded_width, g.padded_height);
+  if (const Refusal* before = inner.refused(ChainStage::Motion, key)) return std::unexpected(*before);
+  auto fixed = static_gmfss(*usable, g.padded_width, g.padded_height, paths::derived_models(p.paths));
+  if (!fixed) return std::unexpected(std::move(fixed.error()));
+  auto networks = build_gmfss_selected(p, init, c, *fixed, g, direct);
+  if (!networks) {
+    if (!watch_now(networks.error())) inner.failed(ChainStage::Motion, key, networks.error());
+    return std::unexpected(std::move(networks.error()));
+  }
+  if (!*networks) return false;
+  c.gmfss_pair = std::move((**networks).pair);
+  c.gmfss_fusion = std::move((**networks).fusion);
+  configure_gmfss(c, settings, p.options, *usable, size, use);
   return true;
 }
+
+}  // namespace
 
 std::expected<bool, StageFailure> load_motion(Player& p, const gpu::BackendInit& init, ChainEngines& c,
                                               const PlaySettings& settings, InnerFallbacks& inner,
                                               const std::string& library) {
   const GmfssUse use = gmfss_wanted(settings);
-  if (use == GmfssUse::Only && !load_gmfss(p, init, c, settings, inner, library)) return false;
-  auto rife = load_rife(p, init, c, settings, inner, library);
-  if (!rife || !*rife) return rife;
-  if (use == GmfssUse::Middle && !load_gmfss(p, init, c, settings, inner, library)) return false;
+  if (use != GmfssUse::Only) {
+    auto rife = load_rife(p, init, c, settings, inner, library);
+    if (!rife || !*rife || use == GmfssUse::Off) return rife;
+    if (!c.rife_motion) {
+      log_channel("app")->warn("GMFSS au milieu des paires : RIFE mouvement absent");
+      return true;
+    }
+  }
+  auto gmfss = load_gmfss(p, init, c, settings, inner, library, use);
+  if (gmfss) return *gmfss;
+  if (use == GmfssUse::Only || watch_now(gmfss.error()) || preparation_stopped(gmfss.error()))
+    return std::unexpected(StageFailure{.refusal = std::move(gmfss.error()), .stage = ChainStage::Motion});
+  log_channel("app")->warn("GMFSS du mélange indisponible ({}) : RIFE seul", gmfss.error().detail);
   return true;
 }
 

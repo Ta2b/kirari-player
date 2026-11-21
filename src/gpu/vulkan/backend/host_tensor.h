@@ -14,6 +14,10 @@
 
 namespace kirari::gpu::vk {
 
+std::expected<std::unique_ptr<TensorBuffer>, Refusal> device_shared_tensor(
+    VkContext& context, net::Runtime& runtime, TensorType type, const Shape& shape, std::uint64_t bytes,
+    std::shared_ptr<HostViews> views);
+
 // L'alignement des mémoires hôte que l'appareil importe (VK_EXT_external_memory_host activée,
 // minImportedHostPointerAlignment), ou 0 s'il n'en importe pas. Tous systèmes.
 std::uint64_t host_import_alignment(const VkContext& context);

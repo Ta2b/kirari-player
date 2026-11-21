@@ -11,9 +11,14 @@ kirari_add_module(core_log
 # core_os : la place des threads face à la lecture (thread_role.h), MMCSS sous Windows ; bibliothèques
 # ouvertes à l'exécution (dynamic_library.h).
 kirari_add_module(core_os
-  SOURCES dynamic_library.cpp thread_role.cpp
+  SOURCES dynamic_library.cpp thread_role.cpp zml_plugin.cpp
   DEPS kirari::core_types
   PRIVATE_DEPS $<$<PLATFORM_ID:Windows>:avrt> ${CMAKE_DL_LIBS})
+
+foreach(platform CUDA ROCM ONEAPI METAL)
+  set(KIRARI_ZML_${platform}_PLUGIN "" CACHE FILEPATH "Plugin PJRT ZML pour ${platform}")
+  target_compile_definitions(kirari_core_os PRIVATE KIRARI_ZML_${platform}_PLUGIN="${KIRARI_ZML_${platform}_PLUGIN}")
+endforeach()
 
 # core : réglages, cadence, choix des moteurs, raccourcis, écritures atomiques.
 kirari_add_module(core

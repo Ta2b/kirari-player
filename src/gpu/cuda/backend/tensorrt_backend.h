@@ -58,9 +58,9 @@ struct LayerWarpBounds;
 
 class TensorRtBackend final : public Backend, public KernelOps {
  public:
-  // trtexec : le constructeur de moteurs livré avec le backend.
+  using TrtexecLocator = std::filesystem::path (*)();
   static std::expected<std::unique_ptr<TensorRtBackend>, Refusal> create(const BackendInit& init,
-                                                                         std::filesystem::path trtexec);
+                                                                         TrtexecLocator locate_trtexec);
   ~TensorRtBackend() override;
   TensorRtBackend(const TensorRtBackend&) = delete;
   TensorRtBackend& operator=(const TensorRtBackend&) = delete;
@@ -221,6 +221,9 @@ class TensorRtBackend final : public Backend, public KernelOps {
   std::expected<void, Refusal> join();
   std::expected<void, Refusal> apply(const LaneHazards::Op& op);
   std::expected<void, Refusal> record(std::size_t lane);  // l'événement en attente de lane
+  void configure_trials(std::uint32_t trials);
+  std::expected<nvinfer1::IRuntime*, Refusal> ensure_tensorrt();
+  void find_trtexec();
   std::expected<void, Refusal> create_lanes();
   void destroy_lanes();         // et rend au pilote ce que la réserve CUDA ne prête plus (A33-01)
   bool any_lane() const;        // une file au moins créée, même par une création interrompue (B01-04)
@@ -301,7 +304,7 @@ class TensorRtBackend final : public Backend, public KernelOps {
   // finale vise 50 dB.
   static constexpr double kGmfssNativeMinDb = 45.0;
   // Les réglages de trtexec de cet appareil (build, build_rife_fused, build_drba_fused).
-  prepare::TrtexecConfig trtexec_config() const;
+  prepare::TrtexecConfig trtexec_config();
   // La voie lane le temps d'une portée.
   class LaneScope {
    public:
@@ -414,6 +417,8 @@ class TensorRtBackend final : public Backend, public KernelOps {
   std::array<PackedWarpSource, 2> warp_rgb_sources_{};
   // kTrialL2Keep (--l2-keep, essai) : l'encodage gardé de RIFE fusionné tenu en L2.
   bool l2_keep_ = false;
+  bool cuda_native_mode_ = false;
+  bool tensorrt_only_ = false;
   bool span_native_ = false;             // bords du SPAN FP8 par les noyaux du FP16 natif (kTrialSpanNative)
   bool span_fp8_native_blocks_ = false;  // convolutions avec ReLU du SPAN FP8 (kTrialSpanFp8NativeBlocks)
   bool rife_hwc8_ = false;    // blocs du RIFE fusionné en E/S HWC8 (kTrialRifeHwc8, allumé par le lecteur)
@@ -429,8 +434,9 @@ class TensorRtBackend final : public Backend, public KernelOps {
   bool tfix_native_ = false;  // convolutions de TemporalFix fusionné par les noyaux natifs (kTrialTfixNative)
   bool warp_l2_ = false;      // kTrialWarpL2 (--warp-l2, essai) : le flot du warp en L2 persistant
   std::optional<std::size_t> l2_persisting_;  // persisting_l2, une fois
+  TrtexecLocator locate_trtexec_ = nullptr;
   std::filesystem::path trtexec_;
-  std::string trtexec_sha256_;  // relevé à create (A05-05)
+  std::string trtexec_sha256_;  // relevé à la découverte de trtexec (A05-05)
   BackendLog log_;
   cudaStream_t stream_ = nullptr;  // la file de la voie courante, l'une de streams_
  public:

@@ -184,8 +184,11 @@ VulkanBackend::VulkanBackend(const BackendInit& init, BackendOptions options)
 }
 
 VulkanBackend::~VulkanBackend() {
-  kernels_.reset();                                           // attend la file, rend images et vues
-  if (queue_ && context_) context_->settle(queue_->lasts());  // la dernière soumission de chaque voie
+  kernels_.reset();  // attend la file, rend images et vues
+  if (queue_ && context_ && !context_->settle(queue_->lasts()) && !runtime_loans_.empty()) {
+    // Une file bloquée peut encore lire les entrées et écrire les sorties PJRT.
+    static_cast<void>(new decltype(runtime_loans_)(std::move(runtime_loans_)));
+  }
   if (pipelines_ && !pipeline_cache_file_.empty()) {
     const std::vector<std::byte> bytes = seal_pipeline_cache(pipelines_->serialize());
     // Un cache perdu se refait.
@@ -199,6 +202,20 @@ std::expected<std::unique_ptr<VulkanBackend>, Refusal> VulkanBackend::create(con
   std::unique_ptr<VulkanBackend> backend(new VulkanBackend(init, std::move(options)));
   if (auto ok = backend->open(init); !ok) return std::unexpected(ok.error());
   return backend;
+}
+
+void VulkanBackend::configure_runtime_memory() {
+  device_import_ = runtime_->shares_device_memory();
+  if (device_import_) {
+    if (auto attached = open_runtime_timeline(); attached)
+      log(BackendLogLevel::Info, "timeline GPU Vulkan/PJRT active");
+    else
+      log(BackendLogLevel::Debug, attached.error().detail);
+  }
+  // GPU intégré seulement : sur une carte, la mémoire hôte se lit par le bus, et le runtime
+  // copie mieux vers la mémoire de la carte que ses noyaux ne la liraient de loin.
+  if (context_->caps().type == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+    host_alignment_ = host_import_alignment(*context_);
 }
 
 std::expected<void, Refusal> VulkanBackend::open(const BackendInit& init) {
@@ -250,10 +267,7 @@ std::expected<void, Refusal> VulkanBackend::open(const BackendInit& init) {
     if (!runtime) return std::unexpected(runtime.error());
     runtime_ = std::move(*runtime);
     host_views_ = std::make_shared<HostViews>();
-    // GPU intégré seulement : sur une carte, la mémoire hôte se lit par le bus, et le runtime
-    // copie mieux vers la mémoire de la carte que ses noyaux ne la liraient de loin.
-    if (context_->caps().type == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
-      host_alignment_ = host_import_alignment(*context_);
+    configure_runtime_memory();
   }
   // Plusieurs voies sans runtime seulement : ses étapes s'ordonnent sur la timeline principale.
   auto queue = BackendQueue::create(*context_, !runtime_);
@@ -265,8 +279,9 @@ std::expected<void, Refusal> VulkanBackend::open(const BackendInit& init) {
     log(BackendLogLevel::Info,
         std::format("réseaux par {} {} sur {}{}", runtime_->name(), runtime_->version(),
                     runtime_->device_name(),
-                    host_alignment_ != 0 ? ", tenseurs dans la mémoire hôte du runtime, importée"
-                                         : ", tenseurs par l'hôte"));
+                    device_import_         ? ", partage GPU demandé"
+                    : host_alignment_ != 0 ? ", tenseurs dans la mémoire hôte du runtime, importée"
+                                           : ", tenseurs par l'hôte"));
   }
   log(BackendLogLevel::Info,
       std::format(
@@ -300,6 +315,7 @@ BackendCaps VulkanBackend::capabilities() const {
             .needs_host_sync = true,
             .fp16 = true,
             .int8 = false,
+            .gmfss = runtime_->name() == "zml",
             .matrix_units = false};
   }
   return {.name = "vulkan",
@@ -341,7 +357,12 @@ std::expected<Artifact, Refusal> VulkanBackend::build(const ModelSpec& model, co
   if (cache_dir_.empty())
     return refuse_backend(RefusalCode::CacheIo, "aucun dossier de cache pour les artefacts");
   if (progress.stop.stop_requested()) return refuse_backend(RefusalCode::Cancelled, "construction annulée");
-  if (runtime_) return build_runtime(model, shapes, progress);
+  if (runtime_ && (!options_.partial_runtime || model.onnx_path.extension() == ".onnx")) {
+    auto built = build_runtime(model, shapes, progress);
+    if (built || !options_.partial_runtime || built.error().code != RefusalCode::FormatUnsupported)
+      return built;
+    log(BackendLogLevel::Info, std::format("{} : repli Vulkan ({})", model.id, built.error().detail));
+  }
   if (prepare::is_rife_fused_manifest(model.onnx_path)) return build_rife_fused(model, shapes, progress);
   if (prepare::is_drba_fused_manifest(model.onnx_path)) return build_drba_fused(model, shapes, progress);
   auto request = request_of(model, shapes, options_.strict_precision);
@@ -449,7 +470,8 @@ std::expected<void, Refusal> VulkanBackend::gate(const ModelSpec& model, net::Ar
 }
 
 std::expected<std::unique_ptr<Engine>, Refusal> VulkanBackend::load(const Artifact& artifact) {
-  if (runtime_) return load_runtime(artifact);
+  if (runtime_ && (!options_.partial_runtime || artifact.path.parent_path().filename() == runtime_->name()))
+    return load_runtime(artifact);
   if (rife_fused_artifact_key_parse(artifact.cache_key)) return load_rife_fused(artifact);
   if (drba_fused_artifact_key_parse(artifact.cache_key)) return load_drba_fused(artifact);
   // Celui que build() vient de vérifier, s'il est de ce chemin : ni relu, ni désérialisé, ni revérifié
@@ -494,7 +516,9 @@ std::expected<std::unique_ptr<Engine>, Refusal> VulkanBackend::load(const Artifa
     if (auto ok = net::write_file(artifact.path, net::serialize(*data)); !ok)
       log(BackendLogLevel::Warn, ok.error().detail);
   }
-  net::NetEngineOptions engine_options{.profile_dispatches = options_.profile_dispatches};
+  net::NetEngineOptions engine_options{.profile_dispatches = options_.profile_dispatches,
+                                       .specialize = options_.specialize_dispatch,
+                                       .target = profile_.target};
   // Le journal est copié, pas le backend : le moteur écrit son tableau à sa destruction.
   if (options_.profile_dispatches && log_) {
     engine_options.log = [log = log_](std::string_view text) { log(BackendLogLevel::Info, text); };
@@ -519,7 +543,6 @@ std::expected<std::unique_ptr<TensorBuffer>, Refusal> VulkanBackend::alloc_tenso
 
 std::expected<void, Refusal> VulkanBackend::enqueue(Engine& engine, std::span<const Tensor> inputs,
                                                     std::span<Tensor> outputs) {
-  if (runtime_) return enqueue_runtime(engine, inputs, outputs);
   // Le profil GPU (stage_clock.h), aux noms de TensorRT : le moteur, et son rôle.
   StageClock* clock = kernels_ ? kernels_->clock() : nullptr;
   if (auto* rife = dynamic_cast<RifeFusedEngine*>(&engine)) {
@@ -536,6 +559,10 @@ std::expected<void, Refusal> VulkanBackend::enqueue(Engine& engine, std::span<co
     const StageClock::Scope role(clock, "rôle interpolation");
     const StageClock::Scope timed(clock, fused_stage("DistilDRBA", inputs));
     return drba->enqueue(*queue_, inputs, outputs);
+  }
+  if (runtime_ && dynamic_cast<VulkanEngine*>(&engine) == nullptr) {
+    const StageClock::Scope role(clock, engine_role(inputs, outputs));
+    return enqueue_runtime(engine, inputs, outputs);
   }
   auto* vulkan = dynamic_cast<VulkanEngine*>(&engine);
   if (vulkan == nullptr) return refuse_backend(RefusalCode::InputMismatch, "moteur d'un autre backend");

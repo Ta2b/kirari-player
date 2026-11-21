@@ -15,6 +15,8 @@
 #include "app/play/rife_fused_choice.h"
 #include "core/log.h"
 #include "core/utf8_path.h"
+#include "gpu/cuda_mode.h"
+#include "gpu/rife_trials.h"
 
 namespace kirari::app::play {
 namespace {
@@ -199,16 +201,24 @@ std::expected<bool, StageFailure> RifeLoad::cuda_direct() {
 
 std::expected<bool, StageFailure> RifeLoad::selected(bool use_rife) {
   const auto log = log_channel("app");
-  if (use_rife && settings.experimental.rife_cuda_direct && c.backend->capabilities().name == "tensorrt")
-    return cuda_direct();
+  const bool direct = use_rife && (init.trials & gpu::kRifeCudaDirect) != 0 &&
+                      gpu::is_cuda_backend(c.backend->capabilities().name);
+  if (direct) {
+    auto loaded = cuda_direct();
+    if (loaded || watch_now(loaded.error().refusal) || preparation_stopped(loaded.error().refusal))
+      return loaded;
+    c.rife_fused_refused = loaded.error().refusal.code;
+    log->warn("RIFE CUDA direct indisponible ({}) : même modèle RIFE sous TensorRT",
+              loaded.error().refusal.detail);
+  }
   // Le fusionné quand rife_fused_choice.h le veut et que le modèle se coupe ; tout échec garde le RIFE
   // entier.
   const std::string fused_declined = use_rife
                                          ? rife_fused_declined(settings, c.backend->capabilities().rife_fused,
                                                                c.rife_planes, model_tier(c.rife_model))
                                          : i18n::tr("no RIFE");
-  fused_wanted = fused_declined.empty();
-  if (use_rife && settings.rife_fused && !fused_wanted)
+  fused_wanted = !direct && fused_declined.empty();
+  if (use_rife && !direct && settings.rife_fused && !fused_wanted)
     log->info("RIFE fusionné non utilisé : {}", fused_declined);
   if (use_rife && !p.options.rife_image) {
     auto motion = motion_variant();

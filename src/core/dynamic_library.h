@@ -26,9 +26,13 @@ inline std::string library_path_text(const std::filesystem::path& path) {
   return text;
 }
 
+// Bibliothèque ou exécutable qui contient cette adresse, pour retrouver ses dépendances livrées.
+std::filesystem::path library_containing(const void* address);
+
 enum class SymbolScope : std::uint8_t {
-  Local,   // RTLD_LOCAL : symboles réservés aux bibliothèques qui en dépendent
-  Global,  // RTLD_GLOBAL : visibles des bibliothèques ouvertes ensuite
+  Local,           // RTLD_LOCAL : symboles réservés aux bibliothèques qui en dépendent
+  GlobalResident,  // rappels de fin de thread du SDK, sa bibliothèque reste chargée dans le processus
+  Global,          // RTLD_GLOBAL : visibles des bibliothèques ouvertes ensuite
 };
 
 class DynamicLibrary {

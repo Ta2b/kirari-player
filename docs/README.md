@@ -9,8 +9,9 @@ comment construire et tester, les pièges). Ensuite, selon le sujet :
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Modules, threads, graphe des cibles, règles de dépendance |
 | [`adr/`](adr/README.md) | Décisions d'architecture, une page chacune |
-| [`moteurs.md`](moteurs.md) | Moteurs des réseaux : Vulkan, TensorRT, Core ML ; MIGraphX et OpenVINO retirés ; livraison de TensorRT |
-| [`interpolation.md`](interpolation.md) | Moteurs du mouvement : RIFE, DistilDRBA, GMFSS union (TensorRT, expérimental) |
+| [`moteurs.md`](moteurs.md) | Moteurs des réseaux : Vulkan, TensorRT, ZML, Core ML ; MIGraphX et OpenVINO retirés ; livraison de TensorRT |
+| [`moteurs-portables.md`](moteurs-portables.md) | Sélection CUDA natif et TensorRT, installation de HIP, Slang, Triton et ZML, compatibilité et potentiel par système |
+| [`interpolation.md`](interpolation.md) | Moteurs du mouvement : RIFE, DistilDRBA, GMFSS union (TensorRT ou ZML, expérimental) |
 | [`auto-libre.md`](auto-libre.md) | Mode Auto de l'interpolation : Rapide et Stable (le § 3, mesures d'octobre 2026, est historique) |
 | [`hdr-anime.md`](hdr-anime.md) | Le grade HDR anime guidé ; la sortie HDR ou SDR qui suit le système |
 | [`luts.md`](luts.md) | Les LUT 3D du grade (le choix des looks n'est plus dans le menu) |
@@ -20,6 +21,7 @@ comment construire et tester, les pièges). Ensuite, selon le sujet :
 | [`amd-windows.md`](amd-windows.md) | AMD et Windows : le profil RDNA4 du moteur Vulkan, D3D11VA |
 | [`span-fp8-cutlass.md`](span-fp8-cutlass.md) | SPAN entier en FP8 (cran Performance, RTX 40) |
 | [`span-native16.md`](span-native16.md) | SPAN par nos noyaux, le défaut sur RTX 40 et 50 : FP16, sommes f32 au cran Qualité (lot C du chantier AnimeJaNai) |
+| [`zml.md`](zml.md) | Moteur ZML, préparation des runtimes, modèles vérifiés et comparaison en lecture réelle |
 | [`span-bilan.md`](span-bilan.md) | Bilan du SPAN natif : fait et mesuré, pistes retenues ou écartées, plafonds et ce qui irait au-delà, ce qui reste, point de reprise |
 | [`fp8-interpolation.md`](fp8-interpolation.md) | Le FP8 de RIFE et DistilDRBA ; celui de GMFSS retiré |
 | [`rife-fusionne.md`](rife-fusionne.md), [`drba-fusionne.md`](drba-fusionne.md) | Réseaux coupés en moteurs TensorRT et noyaux CUDA |

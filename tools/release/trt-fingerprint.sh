@@ -16,11 +16,17 @@
 # modification de src/core refait le paquet ; src/app, src/audio, src/render, la documentation et les tests ne le
 # refont pas.
 #
-#   tools/release/trt-fingerprint.sh [--windows] [dépôt]      # défaut : Linux, le dépôt de ce script
+#   tools/release/trt-fingerprint.sh [--windows [--span-fp16]] [dépôt]   # défaut : Linux
 set -euo pipefail
 
 platform=linux
 [ "${1:-}" = "--windows" ] && { platform=windows; shift; }
+span_fp16=OFF
+if [ "${1:-}" = "--span-fp16" ]; then
+  [ "$platform" = windows ] || { echo "--span-fp16 demande --windows" >&2; exit 2; }
+  span_fp16=ON
+  shift
+fi
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cd "$root"
 paths=(src/core src/gpu src/kernels src/prepare third_party/cutlass 'third_party/nvidia-optical-flow/*.h' cmake
@@ -36,6 +42,7 @@ else
     tools/release/nvidia-vendor/tensorrt-windows-x64.lock tools/release/windows/sign.ps1)
 fi
 {
+  if [ "$span_fp16" = ON ]; then echo "KIRARI_WITH_SPAN_FP16=ON"; fi
   git ls-files -- "${paths[@]}" | LC_ALL=C sort | while IFS= read -r file; do
     # Fins de ligne ramenées à LF : l'empreinte est la même quel que soit le poste qui l'a extraite.
     if [ "$file" = CMakeLists.txt ]; then

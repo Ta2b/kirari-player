@@ -74,6 +74,36 @@ TEST_CASE("Étage gpu : RIFE ×3, l'encodage repris aux instants suivants et à 
   CHECK(rig.rife.follows() == 2);     // le premier instant de (2,3) et de (3,4)
 }
 
+TEST_CASE("Étage gpu : cache de traits RIFE ×8 après un instant annulé et un seek sur les mêmes images",
+          "[app][stage][rife-features]") {
+  using Request = gpu::RifeFeatureRequest;
+  Rig rig;
+  rig.start(rig.setup(true, Factor{8, 1}, 2));
+  rig.feed(1, 2);
+  REQUIRE(rig.collect(2, false));  // la source et le premier instant occupent les deux slots
+  REQUIRE(rig.stage->post(Flush{.epoch = 1}));
+  rig.feed(1, 3, 1);  // la même paire, relue depuis le début
+  rig.release_all();
+  REQUIRE(rig.collect(19));
+  rig.stage.reset();
+
+  std::vector<Request> expected{Request::NewPair, Request::NewPair};
+  expected.insert(expected.end(), 6, Request::SamePair);
+  expected.push_back(Request::Following);
+  expected.insert(expected.end(), 6, Request::SamePair);
+  CHECK(rig.rife.feature_requests() == expected);
+}
+TEST_CASE("Étage gpu : le cache de traits RIFE se limite au facteur actif ×8",
+          "[app][stage][rife-features]") {
+  using Request = gpu::RifeFeatureRequest;
+  Rig rig;
+  rig.start(rig.setup(true, Factor{3, 1}));
+  rig.feed(1, 3);
+  REQUIRE(rig.collect(7));
+  rig.stage.reset();
+  CHECK(rig.rife.feature_requests() == std::vector<Request>(4, Request::Disabled));
+}
+
 TEST_CASE("Étage gpu : RIFE ×2, l'encodage de B repris pour A, oublié à la coupe", "[app][stage]") {
   Rig rig;
   rig.backend.score(SourceId{3}, SourceId{4}, 0.5, 1000);  // coupe de scène : (3,4) sans passe

@@ -224,7 +224,9 @@ std::expected<bool, Refusal> update_stale_engines(PlaceboScreen& screen, PlayerU
                                                   bool& updated) {
   const auto log = log_channel("app");
   for (const core::EnginePackage& package : catalog.packages) {
-    if (!chosen(engines, package.engine)) continue;
+    const bool shared_nvidia =
+        package.engine == core::EngineId::TensorRt && chosen(engines, core::EngineId::Cuda);
+    if (!chosen(engines, package.engine) && !shared_nvidia) continue;
     recover_interrupted_install(catalog, package);
     // C37-02 : la carte du rendu d'aujourd'hui, pas celle de l'installation.
     const std::string arch =

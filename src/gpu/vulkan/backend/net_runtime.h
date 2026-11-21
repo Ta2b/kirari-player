@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,6 +24,7 @@
 
 #include "core/types.h"
 #include "gpu/backend.h"
+#include "gpu/rife_features.h"
 #include "gpu/vulkan/compute/caps.h"
 
 namespace kirari::gpu::vk::net {
@@ -33,6 +35,7 @@ struct HostBinding {
   std::uint64_t bytes = 0;
   TensorType type = TensorType::F16;
   Shape shape;
+  std::uintptr_t device = 0;  // adresse du même tenseur dans le runtime, quand la mémoire GPU est partagée
 };
 
 // Mémoire hôte allouée par le runtime, que la chaîne Vulkan importe (VK_EXT_external_memory_host) :
@@ -51,14 +54,58 @@ struct InputShape {
 };
 
 // Un réseau chargé par le runtime.
+class RuntimeNet;
+class RuntimeSpanRegions {
+ public:
+  virtual ~RuntimeSpanRegions() = default;
+  virtual kernels::SpanTileGrid grid() const = 0;
+  virtual Shape previous_shape() const = 0;
+  virtual std::vector<std::uint16_t> plan(std::span<const std::uint8_t> core) const = 0;
+  virtual RuntimeNet& network() = 0;
+};
+
+class RuntimeRifeFeatures {
+ public:
+  virtual ~RuntimeRifeFeatures() = default;
+  virtual void forget() = 0;
+  virtual std::string summary() const = 0;
+  virtual std::expected<std::shared_ptr<void>, Refusal> run_device(RifeFeatureRequest,
+                                                                   std::span<const HostBinding>,
+                                                                   std::span<const HostBinding>,
+                                                                   std::uint64_t, std::uint64_t) = 0;
+};
+
+class RuntimeTimeReuse {
+ public:
+  virtual ~RuntimeTimeReuse() = default;
+  virtual void forget() = 0;
+  virtual std::string summary() const = 0;
+  virtual std::expected<std::shared_ptr<void>, Refusal> run_device(bool same_images,
+                                                                   std::span<const HostBinding>,
+                                                                   std::span<const HostBinding>,
+                                                                   std::uint64_t, std::uint64_t) = 0;
+};
+
 class RuntimeNet {
  public:
+  // Présent seulement si le réseau régional a déjà été préparé et désérialisé sur cet appareil.
+  std::unique_ptr<RuntimeSpanRegions> span_regions;
+  bool pair12_rgb_only = false;  // propriété du programme effectivement chargé
+  std::unique_ptr<RuntimeRifeFeatures> rife_features;
+  std::unique_ptr<RuntimeTimeReuse> time_reuse;
   virtual ~RuntimeNet() = default;
   virtual std::span<const std::string> input_names() const = 0;
   virtual std::span<const std::string> output_names() const = 0;
   // Calcule les sorties, écrites avant le retour. Refus : celui du runtime, nommé.
   virtual std::expected<void, Refusal> run(std::span<const HostBinding> inputs,
                                            std::span<const HostBinding> outputs) = 0;
+  // Les entrées sont disponibles à wait. La copie des sorties signale done sur la timeline importée.
+  // La file garde le prêt rendu jusqu'à ce signal, y compris les références PJRT.
+  virtual std::expected<std::shared_ptr<void>, Refusal> run_device(std::span<const HostBinding>,
+                                                                   std::span<const HostBinding>,
+                                                                   std::uint64_t, std::uint64_t) {
+    return std::unexpected(Refusal{RefusalCode::FeatureUnavailable, "timeline du runtime indisponible"});
+  }
   // Comme run, sans bloquer l'appelant : sur son propre fil, le runtime attend ready() (les
   // entrées écrites : une attente hôte de la file Vulkan, hors du fil qui nourrit le GPU),
   // calcule, puis appelle done(résultat) une fois ses sorties écrites (le signal hôte de l'étape
@@ -78,6 +125,15 @@ class RuntimeNet {
   // NOLINTEND(performance-unnecessary-value-param)
 };
 
+struct DeviceMemory {
+  std::uintptr_t address = 0;
+  std::shared_ptr<const void> owner;
+};
+
+struct IoNames {
+  std::vector<std::string> inputs, outputs;
+};
+
 class Runtime {
  public:
   virtual ~Runtime() = default;
@@ -92,7 +148,23 @@ class Runtime {
   // statiques), et l'écrit à path. Refus : ceux du runtime, Cancelled.
   virtual std::expected<void, Refusal> build(const ModelSpec& model, std::span<const InputShape> inputs,
                                              const std::filesystem::path& path, Progress& progress) = 0;
+  // Les runtimes à compilation en deux temps écrivent un exécutable voisin de leur source.
+  // nullopt : build suffit. false : la préparation doit terminer ou compléter un ancien cache.
+  virtual std::optional<bool> compiled_artifact_ready(const std::filesystem::path&) const { return {}; }
+  virtual std::expected<void, Refusal> prepare_compiled_artifact(const std::filesystem::path&, const IoNames&,
+                                                                 Progress&) {
+    return {};
+  }
   virtual std::expected<std::unique_ptr<RuntimeNet>, Refusal> load(const std::filesystem::path& path) = 0;
+
+  virtual std::expected<void, Refusal> import_timeline(int) {
+    return std::unexpected(Refusal{RefusalCode::FeatureUnavailable, "import de timeline indisponible"});
+  }
+  virtual bool shares_device_memory() const { return false; }
+  // Importe une allocation Vulkan dédiée, décalage 0. Le descripteur reste la propriété de Vulkan.
+  virtual std::expected<DeviceMemory, Refusal> import_device(std::uintptr_t, std::size_t, std::size_t) {
+    return std::unexpected(Refusal{RefusalCode::FeatureUnavailable, "import de mémoire GPU indisponible"});
+  }
 
   // Mémoire hôte du runtime pour un tenseur (GPU intégré) : bytes octets, adresse multiple de
   // alignment, que le backend importe dans Vulkan ; type et shape, ceux du tenseur qu'elle portera
@@ -118,11 +190,11 @@ using RuntimeFactory = std::function<std::expected<std::shared_ptr<Runtime>, Ref
 std::expected<void, Refusal> write_io_names(const std::filesystem::path& artifact,
                                             std::span<const std::string> inputs,
                                             std::span<const std::string> outputs);
-struct IoNames {
-  std::vector<std::string> inputs;
-  std::vector<std::string> outputs;
-};
 std::expected<IoNames, Refusal> read_io_names(const std::filesystem::path& artifact);
+
+// Commun à la préparation et au chargement direct d'une ancienne source. Hors de la famille
+// publiée/supprimée par publish_artifact et discard_artifact.
+std::filesystem::path artifact_lock_path(const std::filesystem::path& artifact);
 
 // Publie sous final_path l'artefact construit à staged, avec ses fichiers voisins (même nom
 // suivi d'une extension : noms d'E/S, appareil choisi) : chacun par renommage, les noms d'E/S
@@ -141,7 +213,8 @@ std::expected<void, Refusal> copy_converted(const std::byte* from, TensorType fr
                                             TensorType to_type, std::size_t count);
 
 // Les noms de l'interface d'un fichier ONNX, lus par gpu_ir.
-std::expected<IoNames, Refusal> onnx_io_names(const std::filesystem::path& onnx);
+std::expected<IoNames, Refusal> onnx_io_names(const std::filesystem::path& onnx,
+                                              std::vector<InputShape>* declared = nullptr);
 
 // Les dimensions symboliques des entrées d'un fichier ONNX fixées par ces formes : (symbole,
 // valeur), une fois chacun. Refus InputMismatch : un symbole qui recevrait deux valeurs.

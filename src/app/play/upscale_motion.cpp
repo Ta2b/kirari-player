@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "app/play/upscale_stage.h"
+#include "gpu/rife_features.h"
 #include "kernels/spec/rife.h"
 #include "kernels/spec/warp.h"
 
@@ -41,11 +42,14 @@ std::expected<void, Refusal> UpscaleStage::enqueue_on(gpu::Engine& engine, const
   // Le numéro d'une image ne revient jamais : des numéros égaux sont les mêmes pixels, dans le même tampon
   // d'entrée pour l'instant seul. Un autre moteur entre-temps (variante des paires calmes) a son propre
   // encodage : rien n'est annoncé.
+  auto request = gpu::RifeFeatureRequest::NewPair;
   if (!setup_.rife_encode_all && images[0] != 0 && images[1] != 0 && last.engine == &engine) {
     if (last.buffer == rife_pair_ && last.images == images) {
+      request = gpu::RifeFeatureRequest::SamePair;
       engine.next_times_only();
       ++encodes_kept_;
     } else if (last.images[1] == images[0]) {
+      request = gpu::RifeFeatureRequest::Following;
       engine.next_pair_follows();
       ++encodes_followed_;
     } else {
@@ -53,6 +57,11 @@ std::expected<void, Refusal> UpscaleStage::enqueue_on(gpu::Engine& engine, const
     }
   } else {
     ++encodes_cold_;
+  }
+  if (auto* reuse = dynamic_cast<gpu::RifeFeatureHints*>(&engine)) {
+    const bool eligible =
+        !setup_.rife_encode_all && cadence_ && cadence_factor_ == Factor{8, 1} && images[0] && images[1];
+    reuse->next_rife_features(eligible ? request : gpu::RifeFeatureRequest::Disabled);
   }
   const std::array inputs{input};
   auto queued = blame_stage(setup_.backend->enqueue(engine, inputs, results), kMotionRefusalKey);

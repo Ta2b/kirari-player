@@ -7,8 +7,8 @@
 
 #include "app/play/auto_config.h"
 #include "app/play/display_gpu.h"
-#include "app/play/drba_fused_choice.h"
 #include "app/play/drba_model.h"
+#include "app/play/engine_switch.h"
 #include "app/play/first_run.h"
 #include "app/play/host_facts.h"
 #include "app/play/i18n.h"
@@ -22,6 +22,7 @@
 #include "core/clock.h"
 #include "core/log.h"
 #include "core/utf8_path.h"
+#include "gpu/cuda_mode.h"
 #include "prepare/utf8.h"
 
 namespace kirari::app::play {
@@ -78,7 +79,7 @@ void announce_playback(const Player& p, const ColorInfo& source, bool hdr_output
 
 std::vector<media::HwApi> decoder_attempts(std::string_view backend, bool shared_vulkan,
                                            [[maybe_unused]] bool nvidia_gpu) {
-  if (backend == "tensorrt") return {media::HwApi::Cuda, media::HwApi::Software};
+  if (gpu::is_cuda_backend(backend)) return {media::HwApi::Cuda, media::HwApi::Software};
   std::vector<media::HwApi> attempts;
 #if defined(__APPLE__)
   // Le bloc média de la puce : MoltenVK n'offre pas Vulkan Video.
@@ -99,7 +100,7 @@ std::vector<media::HwApi> decoder_attempts(std::string_view backend, bool shared
 
 media::DecoderOptions decoder_options(std::string_view backend, const GpuDevice& render,
                                       const media::HwDeviceSource* shared, HeldExtras extras) {
-  const bool tensorrt = backend == "tensorrt";
+  const bool tensorrt = gpu::is_cuda_backend(backend);
   return {.attempts = decoder_attempts(backend, shared != nullptr, render.vendor() == GpuVendor::Nvidia),
           .render_device = render.uuid,
           .render_luid = render.luid,
@@ -119,8 +120,9 @@ std::string_view ChainEngines::motion_name() const {
 
 std::string ChainEngines::auto_memory_engine(std::string_view span_variant) const {
   std::string out(motion_name());
-  if (!use_drba() && rife_model) out += " " + core::to_utf8(rife_model->stem());
-  if (rife_cuda_direct)
+  if (!use_drba() && gmfss_use != GmfssUse::Only && rife_model)
+    out += " " + core::to_utf8(rife_model->stem());
+  if (rife_cuda_direct || drba_cuda_direct || gmfss_cuda_direct)
     out += " CUDA direct";
   else if (rife_fused || drba_fused)
     out += " fusionné";
@@ -141,14 +143,14 @@ std::string ChainEngines::motion_label(const PlaySettings& settings) const {
           : std::string();
   const std::string cadence = settings.rife_auto ? i18n::tr("Auto") : factor_text(factor_of(settings));
   if (use_drba()) {
-    const std::string_view implementation =
-        settings.experimental.rife_cuda_direct && backend_name == "tensorrt" ? i18n::tr(" · Direct CUDA")
-        : drba_fused                                                         ? i18n::tr(" fused")
-                                                                             : "";
+    const std::string_view implementation = drba_cuda_direct ? i18n::tr(" · Direct CUDA")
+                                            : drba_fused     ? i18n::tr(" fused")
+                                                             : "";
     return std::format("DistilDRBA {}{}{} · ", cadence, implementation, reduced);
   }
   if (use_apple()) return std::format("Apple {} · VideoToolbox · ", cadence);
-  if (gmfss_use == GmfssUse::Only) return std::format("GMFSS union {} · ", cadence);
+  if (gmfss_use == GmfssUse::Only)
+    return std::format("GMFSS union {}{} · ", cadence, gmfss_cuda_direct ? i18n::tr(" · Direct CUDA") : "");
   if ((rife || rife_motion) && rife_model) {
     const std::string_view implementation = rife_cuda_direct ? i18n::tr(" · Direct CUDA")
                                             : rife_fused     ? i18n::tr(" fused")
@@ -272,10 +274,6 @@ void note_opened(ChainEngines& c, const Player& p, const PlaySettings& settings)
 
 }  // namespace
 
-std::string library_name(const Player& p) {
-  return p.library ? core::to_utf8(p.library->path().filename()) : std::string();
-}
-
 std::expected<std::optional<ChainEngines>, Refusal> prepare_chain(Player& p, const PlaySettings& settings,
                                                                   StageMemory* memory) {
   const auto log = log_channel("app");
@@ -363,16 +361,6 @@ std::expected<std::optional<ChainEngines>, Refusal> prepare_chain(Player& p, con
 
 namespace {
 
-// Ce que DistilDRBA chargé a pris : le fusionné, ou l'entier après un refus du fusionné (A03-21).
-void note_drba_fused(ChainEngines& c, const DrbaFusedUse& fused, bool tried) {
-  c.drba_fused = fused.used;
-  c.drba_fused_refused = fused.refused;
-  if (fused.used)
-    log_channel("app")->info("DistilDRBA fusionné : quatre morceaux et noyaux de colle");
-  else if (tried)
-    log_channel("app")->warn("DistilDRBA fusionné indisponible ({}) : DistilDRBA entier", fused.declined);
-}
-
 // Les options d'essai que la chaîne porte telles quelles.
 void take_trials(ChainEngines& c, const PlayOptions& o, const PlaySettings& settings) {
   // Une seule voie par défaut : sur une 4070 Ti (SPAN ×2 vers la 4K, RIFE ×8, look en table), Vulkan fait
@@ -398,7 +386,7 @@ void take_trials(ChainEngines& c, const PlayOptions& o, const PlaySettings& sett
 
 void settle_scene_map(ChainEngines& c, const PlayOptions& options, const PlaySettings& settings,
                       const gpu::BackendInit& init) {
-  c.guided_glows = c.backend_name == "tensorrt" && (c.rife_motion || c.drba_motion) &&
+  c.guided_glows = gpu::is_cuda_backend(c.backend_name) && (c.rife_motion || c.drba_motion) &&
                    (init.trials & gpu::kTrialNvofGlow) != 0;
   c.scene_map = c.scene_map && (c.plate || (c.layers && c.rife_motion) ||
                                 (c.pair_triage && (c.rife_motion || c.gmfss_use != GmfssUse::Off)) ||
@@ -459,7 +447,8 @@ std::expected<bool, StageFailure> prepare_manual_fp8(Player& p, const gpu::Backe
 // Le SPAN natif (docs/span-native16.md), par défaut sur un moteur qui a ses noyaux, aux SPAN d'AnimeJaNai. Il
 // ne quantifie rien : une source HDR ne l'exclut pas.
 bool native_span(const Player& p, const gpu::BackendCaps& caps, const ModelChoice& model) {
-  const bool native = p.options.span_native && caps.span_fp16_cutlass && span_fp8_cutlass_model(model.path);
+  const bool native = cuda_inference_mode(p.engines) != gpu::kTensorRtInference && p.options.span_native &&
+                      caps.span_fp16_cutlass && span_fp8_cutlass_model(model.path);
   if (p.options.span_native && !native)
     log_channel("app")->info("SPAN natif : pas sur ce moteur, cette carte ou ce modèle, TensorRT FP16");
   return native;
@@ -540,92 +529,6 @@ std::expected<bool, StageFailure> load_span(Player& p, const gpu::BackendInit& i
   return true;
 }
 
-// DistilDRBA fusionné (kernels/spec/drba_fused.h) : quatre petits moteurs et des noyaux de colle à la place
-// du moteur entier, quand le backend le sait, que le réglage le veut et que le cran est Équilibre ; tout
-// échec garde le moteur entier. Un refus retenu pour la séance (B08-02) le décline sans reconstruire.
-DrbaFusedUse drba_fused_use(const ChainEngines& c, const PlaySettings& settings, InnerFallbacks& inner,
-                            const std::string& fused_key) {
-  DrbaFusedUse fused;
-  fused.declined = drba_fused_declined(settings, c.backend->capabilities().drba_fused);
-  if (settings.drba_fused && !fused.declined.empty())
-    log_channel("app")->info("DistilDRBA fusionné non utilisé : {}", fused.declined);
-  if (!fused.declined.empty()) return fused;
-  if (const Refusal* before = inner.refused(ChainStage::Motion, fused_key)) {
-    fused.declined = before->detail;
-    fused.refused = before->code;
-  }
-  return fused;
-}
-
-// Le moteur DistilDRBA, la variante mouvement d'abord quand le warp suit SPAN ; pose drba_motion et
-// drba_size.
-std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> build_drba(Player& p,
-                                                                               const gpu::BackendInit& init,
-                                                                               ChainEngines& c,
-                                                                               const PlaySettings& settings,
-                                                                               DrbaFusedUse* fused) {
-  // Warp après SPAN : la variante mouvement, un SPAN par source au lieu d'un par image créée.
-  bool motion =
-      settings.upscale && warp_after_span(settings.span_order, c.work.height * kSpanFactor, c.order_factor);
-  // D4 : la variante mouvement estime à la taille de RIFE mouvement (720p pour un travail plus grand),
-  // comme RIFE ; sans variante mouvement, l'image se refait à la taille de travail.
-  const bool smaller = motion && c.rife_size.height < c.work.height;
-  const WorkSize at = smaller ? c.rife_size : c.work;
-  auto loaded = prepare_distil_drba(p, init, *c.backend, c.model_places, at.width, at.height, c.drba_align,
-                                    settings.motion_precision, fused, &motion, smaller);
-  // Sans variante mouvement, l'image se fait à la taille de travail : rien n'a été construit plus bas.
-  if (smaller &&
-      ((!loaded && loaded.error().key == kDrbaImageElsewhereKey) || (loaded && *loaded && !motion))) {
-    if (fused != nullptr) *fused = DrbaFusedUse{.declined = fused->declined};
-    loaded = prepare_distil_drba(p, init, *c.backend, c.model_places, c.work.width, c.work.height,
-                                 c.drba_align, settings.motion_precision, fused, &motion);
-  }
-  c.drba_motion = loaded && *loaded && motion;
-  c.drba_size = c.drba_motion ? at : c.work;
-  if (c.drba_motion && smaller)
-    log_channel("app")->info("DistilDRBA mouvement : estimé en {}x{}, warp en {}x{}", at.width, at.height,
-                             c.work.width, c.work.height);
-  return loaded;
-}
-
-// La voie mixte peut garder RIFE si DistilDRBA est refusé. Le choix CUDA direct propage le refus au lecteur.
-// Faux : préparation annulée ; vrai : chargée ou refusée avec le repli de la voie mixte.
-std::expected<bool, StageFailure> load_drba(Player& p, const gpu::BackendInit& init, ChainEngines& c,
-                                            const PlaySettings& settings, InnerFallbacks& inner,
-                                            const std::string& library) {
-  const auto log = log_channel("app");
-  const bool direct = settings.experimental.rife_cuda_direct && c.backend_name == "tensorrt";
-  const std::string drba_key = inner_key(std::format("drba {}", name(settings.motion_precision)), library, {},
-                                         c.work.width, c.work.height);
-  if (!direct && inner.refused(ChainStage::Motion, drba_key) != nullptr) {
-    log->info("DistilDRBA refusé plus tôt dans la séance : {}", c.rife_model ? "RIFE" : "sans interpolation");
-    return true;
-  }
-  const std::string fused_key = inner_key("drba-fused", library, {}, c.work.width, c.work.height);
-  DrbaFusedUse fused = direct ? DrbaFusedUse{} : drba_fused_use(c, settings, inner, fused_key);
-  const bool try_fused = fused.declined.empty();
-  auto loaded = build_drba(p, init, c, settings, try_fused ? &fused : nullptr);
-  if (loaded && *loaded) {
-    note_drba_fused(c, fused, try_fused);
-    if (try_fused && fused.refused)
-      inner.failed(ChainStage::Motion, fused_key, Refusal{*fused.refused, fused.declined});
-  }
-  // Annulée, la construction ne passe pas la main à RIFE : l'interpolation part, SPAN reste (A31-15).
-  if (!loaded && (direct || watch_now(loaded.error())))
-    return stage_refused(std::move(loaded.error()), ChainStage::Motion);
-  if (!loaded) {
-    log->warn("{} ; {}", loaded.error().detail, c.rife_model ? "RIFE à la place" : "sans interpolation");
-    inner.failed(ChainStage::Motion, drba_key, loaded.error());
-    p.ui.controls().warn(c.rife_model ? i18n::ui_tr("DistilDRBA unavailable: using RIFE")
-                                      : i18n::ui_tr("DistilDRBA unavailable"),
-                         host_now_us());
-    return true;
-  }
-  if (!*loaded) return false;
-  c.drba = std::move(**loaded);
-  return true;
-}
-
 // Le moteur retenu : au journal et au rapport de problème (B39-02).
 void announce_backend(spdlog::logger& log, const gpu::Backend& backend, const GpuFacts& facts,
                       const std::filesystem::path& library) {
@@ -634,7 +537,8 @@ void announce_backend(spdlog::logger& log, const gpu::Backend& backend, const Gp
            core::to_utf8(library.parent_path().filename()), core::to_utf8(library.filename()));
   note_report_fact("Backend",
                    std::format("{} sur {} · {}", caps.name, caps.device_name, caps.driver_version));
-  if (const std::string rebar = rebar_text(facts); caps.name != "tensorrt" && rebar.rfind("inactif", 0) == 0)
+  if (const std::string rebar = rebar_text(facts);
+      !gpu::is_cuda_backend(caps.name) && rebar.rfind("inactif", 0) == 0)
     log.warn("Resizable BAR inactif : activer Above 4G Decoding et Resizable BAR dans le BIOS");
 }
 
@@ -722,8 +626,7 @@ Prepared prepare_chain_once(Player& p, const PlaySettings& settings) {
       settings.rife_factor >= 2 && (settings.motion_engine == MotionEngine::DistilDrba || shots_drba);
   const bool want_apple = settings.rife_factor >= 2 && settings.motion_engine == MotionEngine::Apple;
   const bool want_gmfss_only = gmfss_wanted(settings) == GmfssUse::Only;
-  if (settings.rife_factor >= 2 && !c.rife_model && !(want_drba && c.drba_found) && !want_apple &&
-      !want_gmfss_only)
+  if (settings.rife_factor >= 2 && !c.rife_model && !want_drba && !want_apple && !want_gmfss_only)
     return stage_refused(std::move(rife_found.error()), ChainStage::Motion);
   show_loading(p.screen, p.ui, i18n::ui_tr("Loading"));
   const gpu::BackendInit init = chain_backend_init(p, settings, c.order_factor);
@@ -785,10 +688,6 @@ Prepared prepare_chain_once(Player& p, const PlaySettings& settings) {
   auto rife = load_motion(p, init, c, settings, inner, library);
   if (!rife) return std::unexpected(std::move(rife.error()));
   if (!*rife) return std::nullopt;
-  if (want_gmfss_only && !c.interpolates())
-    return stage_refused(
-        Refusal{RefusalCode::FieldMissing, "GMFSS seul : aucun moteur GMFSS ni RIFE de repli chargé"},
-        ChainStage::Motion);
   settle_scene_map(c, p.options, settings, init);
   settle_shot_plan(c);
   return std::optional<ChainEngines>(std::move(c));

@@ -63,12 +63,16 @@ TEST_CASE("Une RTX de 12 Go : TensorRT coché, profil 1", "[app][first_run]") {
   const FirstRunView view = first_run_view(kRtx, kHere);
   const EngineRow* vulkan = row_of(view, core::EngineId::Vulkan);
   const EngineRow* tensorrt = row_of(view, core::EngineId::TensorRt);
+  const EngineRow* cuda = row_of(view, core::EngineId::Cuda);
   REQUIRE(vulkan != nullptr);
   REQUIRE(tensorrt != nullptr);
+  REQUIRE(cuda != nullptr);
   CHECK(vulkan->chosen);
   CHECK(tensorrt->chosen);
   CHECK(std::ranges::contains(tensorrt->offer.badges, core::Badge::Recommended));
-  CHECK(view.engines.size() == 2);  // Vulkan et TensorRT seulement
+  CHECK(cuda->usable);
+  CHECK_FALSE(cuda->chosen);
+  CHECK(view.engines.size() == 3);
 }
 
 TEST_CASE("Sous Windows, TensorRT coché, sans offre DirectML", "[app][first_run]") {
@@ -79,7 +83,10 @@ TEST_CASE("Sous Windows, TensorRT coché, sans offre DirectML", "[app][first_run
   const EngineRow* tensorrt = row_of(view, core::EngineId::TensorRt);
   REQUIRE(tensorrt != nullptr);
   CHECK(tensorrt->chosen);
-  CHECK(view.engines.size() == 2);
+  const EngineRow* cuda = row_of(view, core::EngineId::Cuda);
+  REQUIRE(cuda != nullptr);
+  CHECK(cuda->usable);
+  CHECK(view.engines.size() == 3);
 }
 
 TEST_CASE("Sur Mac, Core ML est livré et coché, sans moteur NVIDIA ni AMD", "[app][first_run]") {

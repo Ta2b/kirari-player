@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <expected>
 #include <filesystem>
 #include <functional>
@@ -52,6 +53,9 @@ struct BackendOptions {
   // Les réseaux par un autre runtime (net_runtime.h), créé à l'ouverture de l'appareil :
   // kirari_backend_coreml.
   net::RuntimeFactory runtime;
+  // Un runtime spécialisé peut laisser Vulkan compiler les réseaux et formes qu'il ne prend pas en charge.
+  bool partial_runtime = false;
+  net::SpecializeDispatch specialize_dispatch = nullptr;
   // Couche de validation Vulkan sur l'appareil que le backend crée lui-même (sans appareil de
   // rendu) : ses messages vont au journal et à validation_sink (tests : chaque erreur en échec).
   bool validation = false;
@@ -196,6 +200,17 @@ class VulkanBackend final : public Backend {
   std::shared_ptr<HostViews> host_views_;  // projections des tenseurs d'un runtime
   // Alignement des mémoires hôte du runtime que Vulkan importe (GPU intégré) ; 0 : sans import.
   std::uint64_t host_alignment_ = 0;
+  bool device_import_ = false;
+  std::optional<TimelineSemaphore> runtime_timeline_;
+  std::uint64_t runtime_step_ = 0;
+  struct RuntimeLoan {
+    std::uint64_t completed;
+    std::shared_ptr<void> owner;
+  };
+  std::deque<RuntimeLoan> runtime_loans_;
+  void configure_runtime_memory();
+  Done retire_runtime_loans();
+  Done open_runtime_timeline();
   bool host_import_checked_ = false;  // le GPU a relu un premier import (host_imported_tensor)
   // Le premier échec d'une étape différée, écrit par le fil du runtime, rendu au prochain enqueue.
   std::mutex runtime_mutex_;

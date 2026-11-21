@@ -1,8 +1,7 @@
 // La stabilisation temporelle dans la chaîne (temporal_fix.h, upscale_temporal.cpp) : le modèle de la force
 // choisie, fixé à la taille de travail et son entrée coupée en sept images, construit puis chargé. TensorRT
-// seulement pour l'instant : l'import du moteur Vulkan ne connaît pas encore tous ses opérateurs (CumSum,
-// ReduceSum, ReduceL2…). Un refus laisse la lecture sans elle, la raison au journal, retenu pour la séance
-// (C08-12).
+// et ZML : l'import du moteur Vulkan ne connaît pas encore tous ses opérateurs (CumSum, ReduceSum,
+// ReduceL2…). Un refus laisse la lecture sans elle, la raison au journal, retenu pour la séance (C08-12).
 //
 // Sous TensorRT, la version fusionnée passe d'abord (kernels/spec/tfix_fused.h, docs/temporalfix.md) : le
 // modèle coupé en cinq petits moteurs reliés par des noyaux CUDA, les six appuis en un lot, la fenêtre en un
@@ -24,6 +23,7 @@
 #include "app/play/temporal_fix_model.h"
 #include "core/log.h"
 #include "core/utf8_path.h"
+#include "gpu/cuda_mode.h"
 #include "kernels/spec/tfix_fused.h"
 #include "prepare/tfix_split.h"
 
@@ -181,9 +181,9 @@ std::optional<bool> load_temporal_fix(Player& p, const gpu::BackendInit& init, C
   const TemporalFix fix = settings.temporal_fix;
   if (fix == TemporalFix::Off) return true;
   const auto log = log_channel("app");
-  if (c.backend_name != "tensorrt") {
+  if (!gpu::is_cuda_backend(c.backend_name) && c.backend_name != "zml") {
     log->info(
-        "stabilisation temporelle : le moteur {} ne la fait pas tourner (TensorRT seulement), lecture "
+        "stabilisation temporelle : le moteur {} ne la fait pas tourner (TensorRT ou ZML requis), lecture "
         "sans elle",
         c.backend_name);
     return true;
@@ -219,7 +219,9 @@ std::optional<bool> load_temporal_fix(Player& p, const gpu::BackendInit& init, C
       inner_key(settings.temporal_fix_full ? "temporal-fix-fused-full" : "temporal-fix-fused", library,
                 *found, c.work.width, c.work.height);
   std::optional<Refusal> stopped;
-  switch (whole ? FusedLoad::Declined : load_fused(p, init, c, *found, half, inner, fused_key, stopped)) {
+  switch ((whole || c.backend_name == "zml" || (init.trials & gpu::kTensorRtInference) != 0)
+              ? FusedLoad::Declined
+              : load_fused(p, init, c, *found, half, inner, fused_key, stopped)) {
     case FusedLoad::Loaded:
       log->info("stabilisation temporelle {} fusionnée : {} en {}x{}{}", name(fix),
                 core::to_utf8(found->filename()), c.work.width, c.work.height,

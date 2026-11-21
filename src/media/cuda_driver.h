@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "core/types.h"
-#include "media/frame_data.h"
+#include "media/ready_event.h"
 
 namespace kirari::media {
 

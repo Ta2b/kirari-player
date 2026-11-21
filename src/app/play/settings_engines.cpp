@@ -133,20 +133,28 @@ void engine_section(const SettingsChoices& choices, std::optional<core::EngineId
   section(i18n::tr("Engine"));
   const std::optional<core::EngineId> in_use = choices.engine_in_use;
   const core::EngineId shown = draft.value_or(in_use.value_or(core::EngineId::Vulkan));
-  ImGui::BeginDisabled(choices.switchable.size() < 2);
+  ImGui::BeginDisabled(choices.switchable.size() < 2 && !choices.zml_needs_runtime);
   if (ImGui::BeginCombo(panel::left(i18n::tr("Backend")).c_str(), std::string(engine_label(shown)).c_str())) {
     for (const core::EngineId id : choices.switchable) {
       if (ImGui::Selectable(std::string(engine_label(id)).c_str(), shown == id))
         draft = id == in_use ? std::nullopt : std::optional(id);
     }
+    if (choices.zml_needs_runtime) {
+      ImGui::BeginDisabled();
+      ImGui::Selectable(i18n::tr("ZML (GPU plugin required)"));
+      ImGui::EndDisabled();
+    }
     ImGui::EndCombo();
   }
   ImGui::EndDisabled();
-  panel::tip(i18n::tr("Backend"),
-             i18n::tr("What runs upscaling and interpolation. TensorRT is the fastest on NVIDIA RTX cards, "
-                      "but builds its engines once per model and size (a few minutes the first time). Vulkan "
-                      "works on every graphics card. Recommended: TensorRT on NVIDIA RTX, Vulkan elsewhere."),
-             panel::Apply::Reload);
+  panel::tip(
+      i18n::tr("Backend"),
+      i18n::tr("Runs upscaling and interpolation. CUDA native and TensorRT use NVIDIA RTX cards. "
+               "Vulkan supports "
+               "multiple GPU vendors. ZML compiles each model for the selected GPU when its plugin "
+               "is installed. HIP, Slang and Triton accelerate supported models and use Vulkan for other "
+               "networks. Core ML uses Apple Silicon."),
+      panel::Apply::Reload);
   if (!choices.engine_note.empty()) note(choices.engine_note);
   gpu_choice(gpu, choices.gpus);
   if (ImGui::Button(i18n::tr("Install more engines…"))) actions.emplace_back(OpenEngineScreen{});

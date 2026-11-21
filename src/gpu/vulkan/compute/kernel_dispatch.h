@@ -138,6 +138,7 @@ struct RifeFramesPush {
   std::uint32_t padded_height;
   std::uint32_t left;
   std::uint32_t top;
+  std::uint32_t extend_edge;
   float black;
 };
 
@@ -185,7 +186,7 @@ struct PairPush {
 
 static_assert(sizeof(ChromaPush) == 32 && sizeof(PlanesPush) == 32 && sizeof(ResamplePush) == 16);
 static_assert(sizeof(YuvWindowPush) == 44 && sizeof(RgbWindowPush) == 28 && sizeof(RifeConstantsPush) == 12);
-static_assert(sizeof(RifeFramesPush) == 28 && sizeof(RgbPairPush) == 12 && sizeof(FlowMaxPush) == 24);
+static_assert(sizeof(RifeFramesPush) == 32 && sizeof(RgbPairPush) == 12 && sizeof(FlowMaxPush) == 24);
 static_assert(sizeof(WarpPush) == 48 && sizeof(TransferPush) == 32 && sizeof(PairPush) == 24);
 static_assert(sizeof(PanPush) == 8);
 

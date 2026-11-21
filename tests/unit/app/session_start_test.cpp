@@ -43,6 +43,32 @@ TEST_CASE("Départ : l'horloge part après le premier rendu, --seconds compte de
   CHECK(session.quit_asked());
 }
 
+TEST_CASE("Un premier rendu lent conserve les images suivantes prêtes dans la file", "[app][session]") {
+  test::FakeStages stages;
+  test::FakeScreen screen;
+  test::FakeClock clock;
+  Session session(SessionConfig{.display_period_us = 6'060}, stages, screen, clock);
+  screen.period_us = 6'060;
+  screen.render_us = 92'000;
+  session.set_composited(true);
+  for (std::uint32_t slot = 0; slot < 4; ++slot) session.handle(ring_frame(slot, slot * 20'833));
+  REQUIRE(session.tick(screen.now_us));
+  REQUIRE(screen.shown.back().frame);
+  CHECK(screen.shown.back().frame->pts_us == 0);
+  CHECK(session.stats().render.latest() == 92'000);
+  clock.value = {.media_us = 1'000, .host_us = screen.now_us, .rate = 1.0, .valid = true};
+  REQUIRE(session.tick(screen.now_us));
+  REQUIRE(screen.shown.back().frame);
+  CHECK(screen.shown.back().frame->pts_us == 0);
+  CHECK(session.stats().dropped == 0);
+  screen.render_us = 800;
+  clock.value = {.media_us = 20'833, .host_us = screen.now_us, .rate = 1.0, .valid = true};
+  REQUIRE(session.tick(screen.now_us));
+  REQUIRE(screen.shown.back().frame);
+  CHECK(screen.shown.back().frame->pts_us == 20'833);
+  CHECK(session.stats().dropped == 0);
+}
+
 TEST_CASE("Départ : en pause avant le premier rendu, l'horloge attend la reprise", "[app][session]") {
   test::FakeStages stages;
   test::FakeScreen screen;

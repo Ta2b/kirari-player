@@ -10,6 +10,15 @@ project(kirari
 # CMAKE_CUDA_ARCHITECTURES pendant enable_language(), donc un repli
 # « if(NOT DEFINED) » ne s'exécuterait jamais.
 option(KIRARI_WITH_CUDA "Construire le backend TensorRT et les noyaux CUDA" OFF)
+set(KIRARI_ZML_BUNDLE "$ENV{KIRARI_ZML_BUNDLE}" CACHE PATH "Runtimes PJRT préparés sous cuda/, rocm/, oneapi/ ou metal/")
+set(kirari_zml_default OFF)
+if(KIRARI_ZML_BUNDLE)
+  set(kirari_zml_default ON)
+endif()
+option(KIRARI_WITH_ZML "Construire kirari_backend_zml (plugins PJRT de ZML)" ${kirari_zml_default})
+option(KIRARI_WITH_HIP "Construire le moteur HIP" OFF)
+option(KIRARI_WITH_SLANG "Construire le moteur Slang" OFF)
+option(KIRARI_WITH_TRITON "Construire le moteur Triton" OFF)
 option(KIRARI_WITH_COREML "Construire kirari_backend_coreml (réseaux par Core ML via ONNX Runtime, Mac Apple Silicon)" OFF)
 option(KIRARI_BUILD_TESTS "Construire les tests unitaires" ON)
 option(KIRARI_BUILD_PLAYER "Construire le lecteur ; OFF ne garde que core, kernels et leurs tests" ON)

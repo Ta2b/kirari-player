@@ -134,15 +134,13 @@ constexpr std::array kImageTabs{
           "Le RIFE le plus précis, pour environ 15 % de calcul en plus que RIFE 4.22 lite. Conseillé sur "
           "NVIDIA RTX."},
     Entry{"RIFE 4.25 for most frames, GMFSS union for the middle of fast motion: holds fast pans and "
-          "rotations better. Heavier than RIFE. NVIDIA RTX (TensorRT) only; a trial.",
+          "rotations better. Heavier than RIFE. Requires TensorRT or ZML.",
           "RIFE 4.25 pour la plupart des images, GMFSS union pour le milieu des mouvements rapides : tient "
-          "mieux "
-          "les panoramiques et les rotations rapides. Plus lourd que RIFE. NVIDIA RTX (TensorRT) seulement ; "
-          "un essai."},
-    Entry{"Prioritizes GMFSS keys on every moving pair, with RIFE when time is short. The GMFSS options "
-          "also offer a mode without RIFE. NVIDIA RTX (TensorRT) only.",
-          "Privilégie une clé GMFSS sur chaque paire en mouvement et utilise RIFE quand le temps manque. "
-          "Les options GMFSS proposent aussi un mode sans RIFE. NVIDIA RTX (TensorRT) seulement."},
+          "mieux les panoramiques et les rotations rapides. Plus lourd que RIFE. Nécessite TensorRT ou ZML."},
+    Entry{"Uses GMFSS Fortuna Union for every interpolated frame. The advanced options let "
+          "you combine it with RIFE. Requires CUDA native, TensorRT or ZML.",
+          "Utilise GMFSS Fortuna Union pour chaque image interpolée. Les options avancées permettent "
+          "de l’associer à RIFE. Nécessite CUDA natif, TensorRT ou ZML."},
     Entry{
         "Adds frames between the video's own frames for smoother motion, as many as the display and the "
         "graphics card allow. DistilDRBA v2 lite keeps the rhythm of the animation; RIFE 4.22 lite is the "
@@ -241,18 +239,18 @@ constexpr std::array kImageTabs{
     Entry{"Strong", "Forte"},
     Entry{"Stability", "Stabilité"},
     Entry{"Temporal stabilization", "Stabilisation temporelle"},
-    Entry{
-        "Removes the shimmer from one frame to the next (fizzling lines, crawling textures, flickering "
-        "grain) by comparing each frame with the three before and the three after. Upscaling and "
-        "interpolation then work on a steady picture. Stronger also smooths very small movements. Speed: "
-        "about half the cost of upscaling, as it works at half size and keeps the full detail. TensorRT "
-        "only for now. Recommended: Off, or Normal on an RTX card.",
-        "Retire le fourmillement d'une image à l'autre (traits qui grésillent, textures qui grouillent, "
-        "grain qui scintille) en comparant chaque image aux trois d'avant et aux trois d'après. "
-        "L'agrandissement et l'interpolation travaillent ensuite sur une image stable. Plus fort lisse "
-        "aussi les tout petits mouvements. Vitesse : environ la moitié de l'agrandissement, car elle "
-        "travaille à demi-taille en gardant tout le détail. TensorRT seulement pour l'instant. Recommandé : "
-        "Désactivée, ou Normale sur une carte RTX."},
+    Entry{"Removes the shimmer from one frame to the next (fizzling lines, crawling textures, flickering "
+          "grain) by comparing each frame with the three before and the three after. Upscaling and "
+          "interpolation then work on a steady picture. Stronger also smooths very small movements. Speed: "
+          "about half the cost of upscaling, as it works at half size and keeps the full detail. Works with "
+          "TensorRT "
+          "and ZML. Recommended: Off, or Normal on an RTX card.",
+          "Retire le fourmillement d'une image à l'autre (traits qui grésillent, textures qui grouillent, "
+          "grain qui scintille) en comparant chaque image aux trois d'avant et aux trois d'après. "
+          "L'agrandissement et l'interpolation travaillent ensuite sur une image stable. Plus fort lisse "
+          "aussi les tout petits mouvements. Vitesse : environ la moitié de l'agrandissement, car elle "
+          "travaille à demi-taille en gardant tout le détail. Fonctionne avec TensorRT et ZML. Recommandé : "
+          "Désactivée, ou Normale sur une carte RTX."},
     Entry{"Full-size stabilization", "Stabilisation à pleine taille"},
     Entry{"Runs the temporal stabilization on the full working picture instead of half size: it also "
           "steadies the finest grain and lines, for about four times the cost (about twice upscaling). "
@@ -261,9 +259,8 @@ constexpr std::array kImageTabs{
           "elle stabilise aussi le grain et les traits les plus fins, pour environ quatre fois le coût (à "
           "peu près deux fois l'agrandissement). Recommandé : désactivée, sauf sur une carte RTX haut de "
           "gamme avec peu d'interpolation."},
-    Entry{
-        "Temporal stabilization runs on TensorRT only for now: this engine plays without it.",
-        "La stabilisation temporelle ne tourne que sous TensorRT pour l'instant : ce moteur lit sans elle."},
+    Entry{"Temporal stabilization requires TensorRT or ZML.",
+          "La stabilisation temporelle nécessite TensorRT ou ZML."},
     Entry{"temporal stabilization turns off", "la stabilisation temporelle s'arrête"},
     Entry{"temporal stabilization loads (built the first time for this size)",
           "la stabilisation temporelle se charge (construite la première fois pour cette taille)"},

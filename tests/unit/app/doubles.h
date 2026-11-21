@@ -70,6 +70,7 @@ struct Shown {
 struct FakeScreen final : Screen {
   OutputSize output{1920, 1080};
   std::int64_t period_us = 16'667;
+  std::int64_t render_us = 1000;
   std::int64_t now_us = 0;
   std::int64_t queue_wait_us = 0;  // temps passé dans swap_buffers, rendu à chaque présentation
   std::int64_t acquire_us = 0;     // attente d'acquisition (file FIFO pleine), rendue à chaque présentation

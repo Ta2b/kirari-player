@@ -60,7 +60,8 @@ TEST_CASE("import : chaque opérateur du jeu de l'IR est reconnu", "[gpu_ir][imp
     CHECK(op_from_onnx(op));
   }
   CHECK_FALSE(op_from_onnx("Constant"));  // devenu tenseur constant à l'import
-  CHECK_FALSE(op_from_onnx("MatMul"));
+  CHECK(op_from_onnx("MatMul") == OpKind::MatMul);
+  CHECK_FALSE(op_from_onnx("LSTM"));
 }
 
 TEST_CASE("import : opsets hors de la plage connue refusés", "[gpu_ir][import]") {

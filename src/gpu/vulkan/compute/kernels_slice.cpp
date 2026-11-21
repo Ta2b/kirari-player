@@ -25,7 +25,7 @@ constexpr auto kHeldBlock = static_cast<std::uint32_t>(kernels::kHeldBlock);
 }  // namespace
 
 Done KernelRunner::rife_frames(Recorder& recorder, const TensorView& a, const TensorView& b,
-                               const TensorView& input, float black, std::uint32_t planes) {
+                               const TensorView& input, float black, std::uint32_t planes, bool extend_edge) {
   const Features& enabled = context_->caps().enabled;
   if (auto ok = check_tensor(a, 3, enabled, "entrée RIFE : image a"); !ok) return ok;
   if (auto ok = check_tensor(b, 3, enabled, "entrée RIFE : image b"); !ok) return ok;
@@ -52,6 +52,7 @@ Done KernelRunner::rife_frames(Recorder& recorder, const TensorView& a, const Te
                                     input.height,
                                     static_cast<std::uint32_t>(g.left),
                                     static_cast<std::uint32_t>(g.top),
+                                    extend_edge ? 1U : 0U,
                                     black};
   const std::array buffers{a.buffer, b.buffer, input.buffer};
   return detail::run(*pipelines_, recorder, "rife_frames", input.precision, {}, buffers, {}, bytes_of(push),

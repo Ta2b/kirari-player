@@ -55,6 +55,7 @@ void write_bench_reading(const std::filesystem::path& file, const GpuFacts& gpu,
                              .span_variant = chain.span_variant,
                              .engine = chain.engine,
                              .new_frames = seen.new_frames,
+                             .playback_elapsed_us = chain.playback_elapsed_us,
                              .uninterpolated = seen.uninterpolated};
   if (auto written = save_reading(file, reading); !written)
     log_channel("app")->warn("{}", written.error().detail);

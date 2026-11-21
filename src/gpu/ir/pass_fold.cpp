@@ -18,6 +18,7 @@ constexpr std::uint64_t kMaxFoldedWork = std::uint64_t{1} << 32;
 bool too_costly(const Graph& graph, const Node& node) {
   switch (node.op) {
     case OpKind::Conv:
+    case OpKind::MatMul:
     case OpKind::ConvTranspose:
     case OpKind::AveragePool:
     case OpKind::GridSample:
@@ -97,7 +98,7 @@ bool is_noop(const Graph& graph, const Node& node) {
 
 }  // namespace
 
-std::expected<int, Refusal> fold_constants(Graph& graph) {
+std::expected<int, Refusal> fold_constants(Graph& graph, std::span<const TensorId> preserve) {
   int folded = 0;
   std::vector<Node> kept;
   for (Node& node : graph.nodes) {
@@ -109,7 +110,10 @@ std::expected<int, Refusal> fold_constants(Graph& graph) {
       const Tensor& t = graph.tensors[id];
       return t.known && element_count(t.dims) <= kMaxFoldedElements;
     });
-    if (!(shape_of_known || inputs_constant) || !small || too_costly(graph, node)) {
+    if (!(shape_of_known || inputs_constant) || !small || too_costly(graph, node) ||
+        (!preserve.empty() && std::ranges::any_of(node.outputs, [&](TensorId id) {
+          return std::ranges::contains(preserve, id);
+        }))) {
       kept.push_back(std::move(node));
       continue;
     }

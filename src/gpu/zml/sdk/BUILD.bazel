@@ -1,0 +1,43 @@
+load("@rules_zig//zig:defs.bzl", "zig_binary", "zig_library", "zig_test")
+
+config_setting(
+    name = "rife425_d2_pied64",
+    define_values = {"kirari_zml_rife425_d2_pied64": "true"},
+)
+
+genrule(
+    name = "rife_warp_build",
+    outs = ["rife_warp_build.zig"],
+    cmd = select({
+        ":rife425_d2_pied64": "echo 'pub const enabled = true;' > $@",
+        "//conditions:default": "echo 'pub const enabled = false;' > $@",
+    }),
+)
+
+zig_library(
+    name = "rife_warp_options",
+    main = ":rife_warp_build",
+    import_name = "rife_warp_options",
+)
+
+zig_test(
+    name = "motion_sampling_test",
+    main = "motion_sampling_test.zig",
+    srcs = ["motion_sampling.zig", "rife_warp_d2.zig"],
+    deps = ["//zml/core"],
+)
+
+zig_binary(
+    name = "span_frontend",
+    main = "span_frontend.zig",
+    srcs = ["trace.zig", "span_convolution.zig", "span_gate.zig", "drba_pixel.zig", "gmfss.zig", "gmflow_global.zig", "gmfss_mlp.zig", "motion_frontend.zig", "motion_conv.zig", "rife_blocks.zig", "rife_activation.zig", "rife_features.zig", "motion_sampling.zig", "rife_warp_d2.zig"],
+    visibility = ["//visibility:public"],
+    deps = [":rife_warp_options", "//zml/core", "//mlir", "//mlir/dialects/func", "//mlir/dialects/stablehlo"],
+)
+
+zig_test(
+    name = "rife_blocks_test",
+    main = "rife_blocks_test.zig",
+    srcs = ["motion_conv.zig", "rife_blocks.zig", "rife_activation.zig"],
+    deps = ["//zml/core"],
+)

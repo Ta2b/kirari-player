@@ -27,6 +27,12 @@ on:
         description: "Sans étiquette, avec TensorRT : construire aussi les noyaux CUTLASS du SPAN FP8 sous MSVC (essai 12.4)"
         type: boolean
         default: false
+      moteurs_url:
+        description: "URL HTTPS de l’archive des moteurs expérimentaux (avec moteurs_sha256)"
+        type: string
+      moteurs_sha256:
+        description: "SHA-256 de l’archive des moteurs expérimentaux"
+        type: string
   workflow_call:
     inputs:
       tag:
@@ -36,6 +42,12 @@ on:
       sans_tests:
         type: boolean
         default: false
+      moteurs_url:
+        type: string
+        default: ""
+      moteurs_sha256:
+        type: string
+        default: ""
     outputs:
       archive-sha256:
         description: "SHA-256 de kirari-windows-x64.zip tel que cette construction l'a produit (B51-07)"
@@ -64,6 +76,8 @@ jobs:
     with:
       tag: ${{ inputs.tag || '' }}
       leger: ${{ inputs.sans_tests == true }}
+      moteurs_url: ${{ inputs.moteurs_url || '' }}
+      moteurs_sha256: ${{ inputs.moteurs_sha256 || '' }}
 
   # L'empreinte Windows se calcule sous Linux : les fins de ligne d'une extraction Windows la changeraient.
   trt-check:
@@ -75,6 +89,7 @@ jobs:
       fp: ${{ steps.fp.outputs.fp }}
       repo: ${{ steps.fp.outputs.repo }}
       build: ${{ steps.fp.outputs.build }}
+      span-fp16: ${{ steps.fp.outputs.span-fp16 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -83,11 +98,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           IN_TENSORRT: ${{ inputs.tensorrt }}
+          PORTABLE_URL: ${{ inputs.moteurs_url }}
         run: |
           source tools/release/versions.env
-          fp="$(tools/release/trt-fingerprint.sh --windows)"
+          span_fp16=OFF
+          options=(--windows)
+          if [[ "$KIRARI_TAG" == *-* && -n "$PORTABLE_URL" ]]; then
+            span_fp16=ON
+            options+=(--span-fp16)
+          fi
+          fp="$(tools/release/trt-fingerprint.sh "${options[@]}")"
           echo "fp=$fp" >>"$GITHUB_OUTPUT"
           echo "repo=$KIRARI_RELEASE_REPO" >>"$GITHUB_OUTPUT"
+          echo "span-fp16=$span_fp16" >>"$GITHUB_OUTPUT"
           build=false
           if [ -n "$KIRARI_TAG" ]; then
             gh release view "trt-win-$fp" -R "$KIRARI_RELEASE_REPO" --json assets -q '.assets[].name' 2>/dev/null \
@@ -185,6 +208,7 @@ jobs:
         shell: pwsh
         env:
           IN_SPAN_FP8: ${{ inputs.span_fp8 }}
+          IN_SPAN_FP16: ${{ needs.trt-check.outputs.span-fp16 }}
           # Le module est chargé dans kirari.exe : signé comme lui (Add-Engine, sign.ps1) ; vide tant que le compte
           # Trusted Signing n'existe pas (C51-10). sign.ps1 est dans l'empreinte du paquet.
           AJP_TS_ENDPOINT: ${{ vars.AJP_TS_ENDPOINT }}
@@ -198,6 +222,7 @@ jobs:
           $env:KIRARI_WITH_CUDA = "ON"
           # Le SPAN FP8 sous MSVC reste un essai : jamais dans le paquet d'une empreinte publiée.
           if ($env:IN_SPAN_FP8 -eq "true" -and -not $env:KIRARI_TAG) { $env:KIRARI_WITH_SPAN_FP8 = "ON" }
+          if ($env:IN_SPAN_FP16 -eq "ON") { $env:KIRARI_WITH_SPAN_FP16 = "ON" }
           # Les liens de l'index nomment la release fixe de l'empreinte, celle que lit le paquet du lecteur.
           $env:KIRARI_RELEASE_TAG = "trt-win-$env:FP"
           pwsh tools/release/package-windows.ps1 "$env:RUNNER_TEMP/package" -TensorRtOnly
@@ -269,6 +294,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Préparer les moteurs expérimentaux
+        if: inputs.moteurs_url != '' || inputs.moteurs_sha256 != ''
+        shell: pwsh
+        env:
+          KIRARI_PORTABLE_URL: ${{ inputs.moteurs_url }}
+          KIRARI_PORTABLE_SHA256: ${{ inputs.moteurs_sha256 }}
+        run: python -I tools/release/portable-assets.py configure windows "$env:RUNNER_TEMP/kirari-portable" "$env:GITHUB_ENV"
       # L'index du paquet TensorRT Windows, pris AVANT toute construction : le jeton n'est jamais dans
       # l'environnement d'un code tiers (A28-08). Un paquet joint à l'étiquette elle-même reste lu en second.
       - name: Index TensorRT
@@ -277,14 +309,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release download "trt-win-$FP" -R "$KIRARI_RELEASE_REPO" -p engines-nvidia.lock -D "$RUNNER_TEMP" \
-             || gh release download "$KIRARI_TAG" -R "$KIRARI_RELEASE_REPO" -p engines-nvidia.lock -D "$RUNNER_TEMP"; then
-            echo "KIRARI_ENGINES_LOCK=$RUNNER_TEMP/engines-nvidia.lock" >>"$GITHUB_ENV"
+          if gh release download "trt-win-$FP" -R "$KIRARI_RELEASE_REPO" -p engines-nvidia.lock -D "$RUNNER_TEMP"; then
+            if [ "${KIRARI_PORTABLE_REQUIRED:-}" = 1 ]; then
+              echo "KIRARI_PORTABLE_TENSORRT_URL=https://github.com/$KIRARI_RELEASE_REPO/releases/download/trt-win-$FP/kirari-engine-tensorrt-windows-x64.tar.gz" >>"$GITHUB_ENV"
+            fi
+          elif [ "${KIRARI_PORTABLE_REQUIRED:-}" = 1 ]; then
+            echo "::error::le paquet CUDA natif et TensorRT de l'empreinte Windows $FP est introuvable"
+            exit 1
+          elif gh release download "$KIRARI_TAG" -R "$KIRARI_RELEASE_REPO" -p engines-nvidia.lock -D "$RUNNER_TEMP"; then
+            :
           elif [[ "$KIRARI_TAG" == *-* ]]; then
             echo "::warning::pas de paquet TensorRT Windows pour l'empreinte $FP : préversion publiée sans lui"
           else
             echo "::error::pas de paquet TensorRT Windows pour l'empreinte $FP : une release finale en a toujours un (A28-01)"
             exit 1
+          fi
+          if [ -s "$RUNNER_TEMP/engines-nvidia.lock" ]; then
+            echo "KIRARI_ENGINES_LOCK=$RUNNER_TEMP/engines-nvidia.lock" >>"$GITHUB_ENV"
           fi
       # Le même cache que ci.yml (même triplet) : une clé stable par image du runner, manifeste et ports
       # (voir ci.yml). Sauvé seulement après un paquet construit : jamais une installation coupée.
@@ -314,7 +355,6 @@ jobs:
           path: C:\sc
           key: sccache-release-windows-${{ steps.runner-image.outputs.image }}-${{ github.run_id }}
           restore-keys: sccache-release-windows-${{ steps.runner-image.outputs.image }}-
-      # AMD et Intel passent par Vulkan (docs/moteurs.md).
       - name: Paquet
         id: package
         shell: pwsh

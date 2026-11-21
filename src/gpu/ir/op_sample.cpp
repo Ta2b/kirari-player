@@ -10,6 +10,7 @@
 #include "gpu/ir/graph.h"
 #include "gpu/ir/op_impl.h"
 #include "gpu/ir/op_util.h"
+#include "gpu/ir/sample_coordinates.h"
 
 namespace kirari::gpu::ir::detail {
 namespace {
@@ -80,6 +81,8 @@ std::expected<ResizePlan, Refusal> resize_plan(const Node& node, std::span<const
   return plan;
 }
 
+}  // namespace
+
 float original_coordinate(CoordMode mode, std::int64_t x, float scale, std::int64_t in, std::int64_t out) {
   const auto xf = static_cast<float>(x);
   switch (mode) {
@@ -116,19 +119,11 @@ std::int64_t nearest_index(NearestMode mode, float x, std::int64_t in) {
 }
 
 // Deux voisins et le poids du second, coordonnée bornée à [0, in - 1].
-struct Linear {
-  std::int64_t lo = 0;
-  std::int64_t hi = 0;
-  float t = 0.0F;
-};
-
 Linear linear_taps(float x, std::int64_t in) {
   const float clamped = std::clamp(x, 0.0F, static_cast<float>(in - 1));
   const auto lo = static_cast<std::int64_t>(clamped);
   return {.lo = lo, .hi = std::min(lo + 1, in - 1), .t = clamped - static_cast<float>(lo)};
 }
-
-}  // namespace
 
 Inferred infer_resize(const Node& node, std::span<const Operand> in) {
   auto plan = resize_plan(node, in);

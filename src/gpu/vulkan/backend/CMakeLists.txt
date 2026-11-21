@@ -10,8 +10,9 @@ kirari_add_module(vk_backend
     drba_fused_engine.cpp
     device_profile.cpp
     family.cpp
-    host_tensor.cpp
+    host_tensor.cpp device_tensor.cpp
     kernel_frames.cpp
+    kernel_gmfss.cpp
     kernel_image.cpp
     kernel_ops.cpp
     kernel_ring.cpp

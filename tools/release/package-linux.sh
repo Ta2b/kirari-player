@@ -44,7 +44,23 @@ BASE_URL="https://github.com/${KIRARI_RELEASE_REPO}/releases/download/$TAG"
 # Une étiquette de préversion (v0.11.0-rc.1) donne son suffixe au binaire : il dit la version de l'étiquette (A26-04).
 SUFFIX=""
 case "$TAG" in "v$VERSION"-*) SUFFIX="${TAG#"v$VERSION"}" ;; esac
-cmake --preset linux-release -S "$ROOT" \
+zml="${KIRARI_WITH_ZML:-OFF}"
+[ -z "${KIRARI_ZML_BUNDLE:-}" ] || zml=ON
+slang=OFF
+[ -z "${KIRARI_SLANG_BUNDLE:-}" ] || slang=ON
+triton=OFF
+[ -z "${KIRARI_TRITON_BUNDLE:-}${KIRARI_TRITON_HIP_BUNDLE:-}${KIRARI_TRITON_XPU_BUNDLE:-}" ] || triton=ON
+hip="${KIRARI_WITH_HIP:-OFF}"
+portable_args=()
+for name in KIRARI_HIP_ROCM_PREFIX KIRARI_HIP_CODE_DIRECTORY KIRARI_HIP_ARCHITECTURES KIRARI_HIP_INCLUDE \
+  KIRARI_HIP_CUDA_CODE_DIRECTORY KIRARI_HIP_CUDA_ARCHITECTURES KIRARI_HIP_CUDA_ROOT KIRARI_HIP_CUDA_INCLUDE \
+  KIRARI_SLANG_BUNDLE KIRARI_SLANG_ADDITIONAL_BUNDLES KIRARI_TRITON_BUNDLE KIRARI_TRITON_CUDA_ARCH \
+  KIRARI_TRITON_CUDA_INCLUDE_DIR KIRARI_TRITON_HIP_BUNDLE KIRARI_TRITON_HIP_ARCH KIRARI_TRITON_HIP_INCLUDE_DIR \
+  KIRARI_TRITON_XPU_BUNDLE KIRARI_TRITON_XPU_INCLUDE_DIR KIRARI_ZML_XLA_INCLUDE_DIR KIRARI_ZML_CUDA_INCLUDE_DIR; do
+  if [ -v "$name" ]; then portable_args+=("-D$name=${!name}"); fi
+done
+cmake --preset linux-release -S "$ROOT" -DKIRARI_WITH_ZML="$zml" -DKIRARI_ZML_BUNDLE="${KIRARI_ZML_BUNDLE:-}" \
+  -DKIRARI_WITH_HIP="$hip" -DKIRARI_WITH_SLANG="$slang" -DKIRARI_WITH_TRITON="$triton" "${portable_args[@]}" \
   -DKIRARI_WITH_CUDA="${KIRARI_WITH_CUDA:-OFF}" -DKIRARI_VERSION_SUFFIX="$SUFFIX" \
   ${KIRARI_TENSORRT_ROOT:+-DKIRARI_TENSORRT_ROOT="$KIRARI_TENSORRT_ROOT"} \
   ${KIRARI_BUILD_TESTS:+-DKIRARI_BUILD_TESTS="$KIRARI_BUILD_TESTS"}
@@ -180,6 +196,13 @@ cp "$BUILD/src/app/kirari" "$STAGE/"
 cp "$BUILD/src/gpu/vulkan/backend/kirari_backend_vulkan.so" "$STAGE/"
 copy_deps "$STAGE/lib" "$STAGE/kirari" "$STAGE/kirari_backend_vulkan.so"
 patchelf --force-rpath --set-rpath '$ORIGIN/lib' "$STAGE/kirari" "$STAGE/kirari_backend_vulkan.so"
+for engine in zml hip slang triton; do
+  [ "${!engine}" = ON ] || continue
+  module="$STAGE/kirari_backend_$engine.so"
+  cmake --install "$BUILD" --component "$engine" --prefix "$STAGE"
+  copy_deps "$STAGE/lib" "$module"
+  patchelf --force-rpath --set-rpath '$ORIGIN/lib' "$module"
+done
 origin "$STAGE/lib"
 check_portable "$STAGE/lib"
 check_portable "$STAGE" "$STAGE/lib"
@@ -294,6 +317,10 @@ if [ -n "${KIRARI_ENGINES_LOCK:-}" ]; then
 fi
 cp "$LOCK" "$OUT/engines.lock"
 
+if [ "${KIRARI_PORTABLE_REQUIRED:-}" = 1 ]; then
+  python3 -I "$ROOT/tools/release/portable-assets.py" check-stage linux "$STAGE"
+fi
+if [ "$zml" = ON ]; then cmake "-Dstage=$STAGE" -P "$ROOT/cmake/CheckZmlPackage.cmake"; fi
 pack "$OUT" kirari-linux-x64 "$OUT/kirari-linux-x64.tar.gz"
 ( cd "$OUT" && sha256sum kirari-*.tar.gz engines.lock > SHA256SUMS )
 echo "lecteur : $OUT/kirari-linux-x64.tar.gz"

@@ -8,7 +8,9 @@
 #include <utility>
 #include <vector>
 
+#include "app/play/engine_switch.h"
 #include "core/utf8_path.h"
+#include "gpu/cuda_mode.h"
 
 namespace kirari::app::play {
 namespace {
@@ -155,6 +157,16 @@ std::expected<std::shared_ptr<BackendLibrary>, Refusal> BackendLibrary::choose(
 
 std::expected<BackendLibrary::Instance, Refusal> BackendLibrary::create(
     const std::shared_ptr<BackendLibrary>& library, const gpu::BackendInit& init) {
+  if (!library || !library->handle_)
+    return refuse(RefusalCode::LibraryUnavailable, "bibliothèque de backend absente");
+  const DynamicLibrary& handle = *library->handle_;
+  const std::uint32_t mode = init.trials & gpu::kCudaInferenceModes;
+  if (mode != 0 && engine_of_library(library->path()) == core::EngineId::TensorRt) {
+    const auto modes = symbol<std::uint32_t (*)() noexcept>(handle, "kirari_backend_cuda_modes");
+    if (modes == nullptr || (modes() & mode) != mode)
+      return refuse(RefusalCode::AbiMismatch,
+                    "module NVIDIA à mettre à jour pour séparer CUDA natif et TensorRT");
+  }
   Refusal refusal{RefusalCode::LibraryUnavailable, "kirari_backend_create sans refus"};
   gpu::BackendInit with_refusal = init;
   with_refusal.refusal = &refusal;

@@ -17,6 +17,7 @@
 
 #include "app/play/upscale_stage.h"
 #include "core/trace.h"
+#include "gpu/drba_pair12.h"
 #include "kernels/spec/detect.h"
 #include "kernels/spec/distil_drba.h"
 #include "kernels/spec/resample.h"
@@ -254,21 +255,24 @@ std::expected<void, Refusal> UpscaleStage::run_drba(const kernels::DrbaCall& cal
   const gpu::Tensor& img2 = call.on_b ? (whole ? after : b) : b;
   // Rend vrai quand les six plans RGB ont été repris.
   const auto fill = [&](gpu::TensorBuffer& input, DrbaBuffers::Filled& filled, const gpu::Tensor& first,
-                        const gpu::Tensor& second, bool reads_time) -> std::expected<bool, Refusal> {
+                        const gpu::Tensor& second, bool reads_time,
+                        gpu::DrbaPair12Writer* writer) -> std::expected<bool, Refusal> {
     if (drba_.time_only && filled.first == &first && filled.second == &second) {
       if (!reads_time || ops.rife_time(input.tensor(), call.u)) return true;
       drba_.time_only = false;
     }
     filled = {};
-    if (auto ok = ops.rife_input(first, second, call.u, input.tensor()); !ok)
-      return std::unexpected(ok.error());
+    auto ok = writer ? writer->write_third_image(second, input.tensor())
+                     : ops.rife_input(first, second, call.u, input.tensor());
+    if (!ok) return std::unexpected(ok.error());
     filled = {.first = &first, .second = &second};
     return false;
   };
-  auto times01 = fill(*drba_.pair01, drba_.filled01, img0, img1, true);
+  auto times01 = fill(*drba_.pair01, drba_.filled01, img0, img1, true, nullptr);
   if (!times01) return std::unexpected(std::move(times01.error()));
   // Le fusionné ne lit pas le plan temps de pair12, même quand il doit réencoder le trio.
-  auto times12 = fill(*drba_.pair12, drba_.filled12, img1, img2, !setup_.drba_fused);
+  auto* writer = dynamic_cast<gpu::DrbaPair12Writer*>(setup_.distil_drba);
+  auto times12 = fill(*drba_.pair12, drba_.filled12, img1, img2, !setup_.drba_fused && !writer, writer);
   if (!times12) return std::unexpected(std::move(times12.error()));
   // D6 : les mêmes images, un autre instant : le moteur fusionné garde leurs réductions et leurs encodages.
   if (*times01 && *times12) setup_.distil_drba->next_times_only();

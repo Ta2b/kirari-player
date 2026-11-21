@@ -60,6 +60,10 @@ TEST_CASE("GMFSS seul prend la taille de travail sans moteur RIFE", "[app][chain
   CHECK(chain.motion_label(settings).find("Auto") != std::string::npos);
   settings.rife_auto = false;
   CHECK(chain.motion_label(settings).find("×10") != std::string::npos);
+  chain.rife_model = "rife425.onnx";  // poids présents à côté de GMFSS
+  CHECK_FALSE(chain.auto_memory_engine("FP16").contains("rife425"));
+  chain.gmfss_cuda_direct = true;
+  CHECK(chain.motion_label(settings).contains("CUDA"));
 }
 
 TEST_CASE("RIFE CUDA direct a son libellé et son historique Auto", "[app][chain][rife]") {

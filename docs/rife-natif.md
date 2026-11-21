@@ -321,14 +321,13 @@ natif par-dessus l'essai.
 
 ### RIFE CUDA direct
 
-Sur NVIDIA avec le backend TensorRT sélectionné, **Vidéo > Interpolation >
-Avancé > Essais > RIFE CUDA direct** charge tous les blocs et l'encodeur RIFE
+Sur NVIDIA, **Vidéo → Général → Moteur de calcul → CUDA natif** charge tous les blocs et l'encodeur RIFE
 dans les noyaux CUDA. Le lecteur lit les poids des morceaux ONNX. Il ne
 construit ni ne charge de plans TensorRT pour RIFE et ne lance ni réglage
 chronométré ni comparaison avec TensorRT. Le chargement alloue les tampons,
 envoie les poids et vérifie l'exécution de la chaîne CUDA. Si le modèle ou
-la forme sont refusés, ce choix ne charge pas un moteur TensorRT à leur place.
-Le réglage est décoché par défaut et s'applique au rechargement de la vidéo.
+la forme sont refusés, le lecteur essaie le même RIFE sous TensorRT. Le choix du moteur s'applique au
+rechargement de la vidéo.
 Les statistiques de lecture affichent « CUDA direct » quand ce chargement a réussi.
 Le backend NVIDIA reste chargé pour la chaîne vidéo et les autres modèles.
 Si l'échelle par paire ou le modèle léger des paires calmes est demandé, il

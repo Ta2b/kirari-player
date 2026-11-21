@@ -44,6 +44,7 @@ extern char** environ;  // NOLINT : env: hérité de la relance
 #include <system_error>
 #include <vector>
 
+#include "app/backend_paths.h"
 #include "app/play/auto_bench_run.h"
 #include "app/play/data_dirs.h"
 #include "app/play/default_player.h"
@@ -114,23 +115,6 @@ constexpr std::string_view kExecutable = "kirari.exe";
 #else
 constexpr std::string_view kExecutable = "kirari";
 #endif
-
-// Les modules des backends (bibliothèques MODULE de CMake : .so hors de Windows, macOS compris).
-#ifdef _WIN32
-constexpr std::string_view kModuleSuffix = ".dll";
-#else
-constexpr std::string_view kModuleSuffix = ".so";
-#endif
-
-// Les dossiers où chercher un module : celui de l'exécutable, puis, dans un paquet .app (où
-// SDL_GetBasePath rend Contents/Resources), Contents/PlugIns.
-std::vector<std::filesystem::path> module_dirs(const std::filesystem::path& base) {
-  std::vector<std::filesystem::path> dirs{base};
-#ifdef __APPLE__
-  dirs.push_back(base / ".." / "PlugIns");
-#endif
-  return dirs;
-}
 
 constexpr int kKeptLogs = 3;  // kirari.log.1 à kirari.log.3
 
@@ -709,25 +693,7 @@ int run_player(int argc, char** argv) {
       .relaunch = &engines_updated,
       .relaunch_reason = &relaunch_reason,
   };
-  // TensorRT d'abord (cartes NVIDIA) et Core ML (Apple), qui refusent les autres fabricants, puis Vulkan (le
-  // recours partout) ; chacun à côté de l'exécutable, puis dans l'arbre de construction.
-  const auto beside = [&](std::string_view backend) {
-    for (const std::filesystem::path& dir : module_dirs(base))
-      paths.backends.push_back(
-          dir / (std::string("kirari_backend_") + std::string(backend) + std::string(kModuleSuffix)));
-  };
-  beside("tensorrt");
-#ifdef KIRARI_BACKEND_TENSORRT
-  paths.backends.emplace_back(KIRARI_BACKEND_TENSORRT);
-#endif
-  beside("coreml");  // Mac : Core ML, qui refuse les autres appareils
-#ifdef KIRARI_BACKEND_COREML
-  paths.backends.emplace_back(KIRARI_BACKEND_COREML);
-#endif
-  beside("vulkan");
-#ifdef KIRARI_BACKEND_VULKAN
-  paths.backends.emplace_back(KIRARI_BACKEND_VULKAN);
-#endif
+  kirari::app::add_backend_paths(paths, base);
   before_play(paths.engines, place.executable, argc, argv, log_file);
   const auto played = play_then_settle(*options, paths);
   instance.reset();  // avant SDL_Quit : le fil du canal pousse dans la file de SDL

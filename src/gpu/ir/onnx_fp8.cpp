@@ -65,14 +65,14 @@ std::optional<std::int64_t> quant_axis(const Node& node) {
 }
 
 // Poids constants quantifiés par canal : x_k arrondi à la grille de l'échelle de son canal. dequantize : x_k
-// est déjà le q d'un initialiseur INT8 (DequantizeLinear seul), rendu q × échelle.
+// est déjà le q d'un initialiseur INT8 ou E4M3 (DequantizeLinear seul), rendu q × échelle.
 std::optional<Tensor> fold_per_channel(const Tensor& weights, const Tensor& scale, std::int64_t axis,
                                        std::string name, Grid grid, bool dequantize = false) {
   const auto rank = static_cast<std::int64_t>(weights.dims.size());
   if (axis < 0) axis += rank;
   if (axis < 0 || axis >= rank || weights.floats.empty() ||
       weights.dims[static_cast<std::size_t>(axis)] != static_cast<std::int64_t>(scale.floats.size()) ||
-      (dequantize ? weights.data_type != kInt8
+      (dequantize ? weights.data_type != (grid == Grid::E4m3 ? kFloat8E4M3Fn : kInt8)
                   : (weights.data_type != kFloat && weights.data_type != kFloat16))) {
     return std::nullopt;
   }
@@ -99,17 +99,21 @@ bool pairs_with(const Graph& graph, const Node& quant, const Node& dequant, Grid
          (dequant.inputs.size() == 2 || zero_grid(graph, dequant) == grid);
 }
 
-// Un DequantizeLinear seul d'un initialiseur INT8 (poids rangés en entiers par l'outil de quantification) :
-// l'initialiseur flottant q × échelle, dans le type de l'échelle, scalaire ou par canal ; nullopt sinon. Sans
-// zéro (deux entrées), celui d'un INT8 vaut 0.
+// Un DequantizeLinear seul d'un initialiseur INT8 ou E4M3 (poids rangés en entiers par l'outil de
+// quantification) : l'initialiseur flottant q × échelle, dans le type de l'échelle, scalaire ou par canal ;
+// nullopt sinon. Sans zéro (deux entrées), celui d'un INT8 vaut 0.
 std::optional<Tensor> fold_dequantized(const Graph& graph, const Node& dequant) {
   if (!is_default_domain(dequant.domain) || dequant.op_type != "DequantizeLinear" ||
-      dequant.outputs.size() != 1 || (dequant.inputs.size() != 2 && zero_grid(graph, dequant) != Grid::Int8))
+      dequant.outputs.size() != 1 || (dequant.inputs.size() != 2 && dequant.inputs.size() != 3))
     return std::nullopt;
   const Tensor* weights = find_initializer(graph, dequant.inputs[0]);
   const Tensor* scale = positive_scale(graph, dequant);
   const auto axis = quant_axis(dequant);
-  if (weights == nullptr || weights->data_type != kInt8 || scale == nullptr || !axis) return std::nullopt;
+  if (weights == nullptr || (weights->data_type != kInt8 && weights->data_type != kFloat8E4M3Fn) ||
+      scale == nullptr || !axis)
+    return std::nullopt;
+  const auto grid = weights->data_type == kInt8 ? Grid::Int8 : Grid::E4m3;
+  if (dequant.inputs.size() == 3 && zero_grid(graph, dequant) != grid) return std::nullopt;
   if (scale->dims.empty()) {
     Tensor out = *weights;
     out.name = dequant.outputs[0];
@@ -117,10 +121,10 @@ std::optional<Tensor> fold_dequantized(const Graph& graph, const Node& dequant) 
     for (float& v : out.floats) v = dequantized(v, scale->floats[0], scale->data_type);
     return out;
   }
-  return fold_per_channel(*weights, *scale, *axis, dequant.outputs[0], Grid::Int8, true);
+  return fold_per_channel(*weights, *scale, *axis, dequant.outputs[0], grid, true);
 }
 
-// Les DequantizeLinear INT8 seuls, sur des poids entiers, pliés en initialiseurs (ajoutés à folded) ; leur
+// Les DequantizeLinear seuls, sur des poids quantifiés, pliés en initialiseurs (ajoutés à folded) ; leur
 // nombre.
 std::size_t fold_lone_dequantized(const Graph& graph, std::vector<bool>& removed,
                                   std::vector<Tensor>& folded) {

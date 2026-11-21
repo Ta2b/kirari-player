@@ -1,12 +1,15 @@
 # media : démultiplexage, décodage matériel, horodatage. Thread source.
 # FFmpeg reste hors des en-têtes d'interface (source, demuxer, video_decoder,
 # packet, track, selection, hw_api) : seuls les en-têtes internes et les .cpp l'incluent.
+kirari_add_module(cuda_driver SOURCES cuda_driver.cpp DEPS kirari::core_types PRIVATE_DEPS ${CMAKE_DL_LIBS})
+set_target_properties(kirari_cuda_driver PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 kirari_add_module(media
   SOURCES
-    av_util.cpp face_cascade.cpp face_skin.cpp faces.cpp field_alignment.cpp "${CMAKE_CURRENT_BINARY_DIR}/face_cascade_data.cpp" ffmpeg_log.cpp bench_clip.cpp color.cpp live_scenes.cpp probe_flow.cpp probe_flow_nvof.cpp shot_cache.cpp shot_cutter.cpp shot_rhythm.cpp shot_measure.cpp shot_probe.cpp shot_timeline.cpp stills.cpp cuda_driver.cpp demuxer.cpp frame_data.cpp hw_device.cpp
+    av_util.cpp face_cascade.cpp face_skin.cpp faces.cpp field_alignment.cpp "${CMAKE_CURRENT_BINARY_DIR}/face_cascade_data.cpp" ffmpeg_log.cpp bench_clip.cpp color.cpp live_scenes.cpp probe_flow.cpp probe_flow_nvof.cpp shot_cache.cpp shot_cutter.cpp shot_rhythm.cpp shot_measure.cpp shot_probe.cpp shot_timeline.cpp stills.cpp demuxer.cpp frame_data.cpp hw_device.cpp
     language.cpp packet.cpp packet_reserve.cpp selection.cpp source.cpp source_loop.cpp
     tag_text.cpp track.cpp track_language.cpp video_decoder.cpp deinterlace.cpp mkv_chapters.cpp telecine.cpp
-  DEPS kirari::core_types kirari::kernels
+  DEPS kirari::core_types kirari::kernels kirari::cuda_driver
   PRIVATE_DEPS kirari::av kirari::dep::ffmpeg kirari::core kirari::core_log kirari::core_os kirari::dep::vulkan ${CMAKE_DL_LIBS})
 
 # Le flux optique de la pré-analyse (probe_flow_nvof.cpp) : les en-têtes BSD de NVIDIA, et le <cuda.h> réduit

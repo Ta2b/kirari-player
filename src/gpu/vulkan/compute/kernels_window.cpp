@@ -158,6 +158,26 @@ Done KernelRunner::rife_crop(Recorder& recorder, const TensorView& padded, const
                      {groups_for(dst.width), groups_for(dst.height), dst.planes});
 }
 
+Done KernelRunner::drba_third_image(Recorder& recorder, const TensorView& image, const TensorView& pair12,
+                                    float black) {
+  const Features& enabled = context_->caps().enabled;
+  if (auto ok = check_tensor(image, 3, enabled, "DistilDRBA : troisième image"); !ok) return ok;
+  if (auto ok = check_tensor(pair12, 7, enabled, "DistilDRBA : entrée pair12"); !ok) return ok;
+  if (image.precision != pair12.precision ||
+      !kernels::rife_fits(static_cast<int>(image.width), static_cast<int>(image.height),
+                          static_cast<int>(pair12.width), static_cast<int>(pair12.height)))
+    return refuse(RefusalCode::InputMismatch,
+                  "DistilDRBA : dimensions ou précisions de pair12 incompatibles");
+  const auto g = window_of(image.width, image.height, pair12.width, pair12.height);
+  const auto bytes = tensor_bytes(pair12.width, pair12.height, 3, pair12.precision);
+  const BufferView rgb{pair12.buffer.buffer, pair12.buffer.offset + bytes, bytes};
+  const detail::RgbWindowPush push{image.width, image.height, pair12.width, pair12.height,
+                                   g.left,      g.top,        black};
+  const std::array buffers{image.buffer, rgb};
+  return detail::run(*pipelines_, recorder, "rgb_window", pair12.precision, {}, buffers, {}, bytes_of(push),
+                     {groups_for(pair12.width), groups_for(pair12.height), 3});
+}
+
 Done KernelRunner::scene_diff(Recorder& recorder, const YuvView& a, const YuvView& b,
                               const BufferView& partials) {
   if (auto ok = check_pair(a, b, "coupe de scène"); !ok) return ok;

@@ -82,8 +82,9 @@ struct SettingsChoices {
   bool hdr_output = true;     // l'écran reçoit du PQ (sinon ni HDR natif ni grade)
   int auto_peak = 0;          // pic automatique de l'écran, en nits
   std::vector<EngineBadge> engines;
-  std::string chosen_engines;                   // « Vulkan, TensorRT » (settings.toml)
-  std::vector<core::EngineId> switchable;       // moteurs de SPAN et RIFE installés (engine_switch.h)
+  std::string chosen_engines;              // « Vulkan, TensorRT » (settings.toml)
+  std::vector<core::EngineId> switchable;  // moteurs de SPAN et RIFE installés (engine_switch.h)
+  bool zml_needs_runtime = false;
   std::optional<core::EngineId> engine_in_use;  // celui de la bibliothèque chargée
   std::string engine_note;                      // le moteur préféré a refusé ce GPU : pourquoi
   std::string display_text;                     // l'écran selon son EDID (display_edid.h : describe)

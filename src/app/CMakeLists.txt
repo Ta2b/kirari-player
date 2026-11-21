@@ -6,7 +6,7 @@
 # threads source, gpu, audio et subs, horloge audio maîtresse).
 kirari_add_module(app
   SOURCES
-    play/apple_model.cpp play/auto_bench.cpp play/auto_bench_run.cpp play/machine_calibration.cpp play/settings_bench_results.cpp play/bench_steps.cpp play/span_auto.cpp play/auto_config.cpp play/auto_watch.cpp play/backend_library.cpp play/bench_events.cpp play/pumped_task.cpp play/single_instance.cpp play/bridges.cpp play/subtitle_lead.cpp play/edition_plan.cpp play/build_progress.cpp play/chain.cpp play/chain_hdr.cpp play/chain_shots.cpp play/chain_setup.cpp play/chain_half.cpp play/chain_rife.cpp play/chain_gmfss.cpp play/chain_temporal.cpp play/chain_layers.cpp play/chain_layers.cpp play/chain_shot_plan.cpp play/temporal_fix_model.cpp play/chain_stats.cpp play/look_catalog.cpp play/model_choice.cpp play/anime4k_choice.cpp play/chain_upscaler.cpp play/chapters.cpp play/controls.cpp play/controls_draw.cpp play/controls_icons.cpp play/crash_dump.cpp play/problem_report.cpp play/settings_changes.cpp play/chain_shape.cpp play/default_player.cpp play/data_dirs.cpp play/legacy_dirs.cpp play/derived_model.cpp play/span_derive.cpp play/span_commit.cpp play/span_fp16_engine.cpp play/span_int8.cpp play/display_edid.cpp play/drba_model.cpp play/gmfss_model.cpp play/engine_build.cpp play/episodes.cpp play/engine_downloads.cpp play/engine_install.cpp play/engine_cuda_arch.cpp play/engine_space.cpp play/engine_retry.cpp play/engine_vendor.cpp play/engine_versions.cpp play/engine_online.cpp play/engine_screen.cpp play/engine_switch.cpp play/ed25519.cpp play/engine_tools.cpp play/updater.cpp play/updater_state.cpp play/export_job.cpp play/export_run.cpp play/export_sink.cpp play/first_run.cpp play/first_run_wizard.cpp play/wizard.cpp play/gpu_tier.cpp "${CMAKE_CURRENT_BINARY_DIR}/gpu_tiers_data.cpp" play/home_screen.cpp play/host_choices.cpp play/i18n.cpp play/i18n_fr.cpp play/i18n_fr_settings.cpp play/i18n_fr_image.cpp play/i18n_fr_sound.cpp play/i18n_fr_menu.cpp play/i18n_fr_system.cpp play/i18n_fr_wizard.cpp play/i18n_fr_messages.cpp play/i18n_fr_stats.cpp play/i18n_fr_visible.cpp play/home_view.cpp play/host_facts.cpp play/window_vrr.cpp play/system_peak.cpp play/system_language.cpp play/release_refresh.cpp play/resource_usage.cpp play/display_probe.cpp play/display_follow.cpp play/display_gpu.cpp play/player_probe.cpp play/invalid_copies.cpp play/chain_retreat.cpp play/player_notices.cpp
+    play/apple_model.cpp play/auto_bench.cpp play/auto_bench_run.cpp play/machine_calibration.cpp play/settings_bench_results.cpp play/bench_steps.cpp play/span_auto.cpp play/auto_config.cpp play/auto_watch.cpp play/backend_library.cpp play/bench_events.cpp play/pumped_task.cpp play/single_instance.cpp play/bridges.cpp play/subtitle_lead.cpp play/edition_plan.cpp play/build_progress.cpp play/chain.cpp play/chain_hdr.cpp play/chain_shots.cpp play/chain_setup.cpp play/chain_half.cpp play/chain_rife.cpp play/chain_drba.cpp play/chain_gmfss.cpp play/chain_temporal.cpp play/chain_layers.cpp play/chain_shot_plan.cpp play/temporal_fix_model.cpp play/chain_stats.cpp play/look_catalog.cpp play/model_choice.cpp play/anime4k_choice.cpp play/chain_upscaler.cpp play/chapters.cpp play/controls.cpp play/controls_draw.cpp play/controls_icons.cpp play/crash_dump.cpp play/problem_report.cpp play/settings_changes.cpp play/chain_shape.cpp play/default_player.cpp play/data_dirs.cpp play/legacy_dirs.cpp play/derived_model.cpp play/span_derive.cpp play/span_commit.cpp play/span_fp16_engine.cpp play/span_int8.cpp play/display_edid.cpp play/drba_model.cpp play/gmfss_model.cpp play/engine_build.cpp play/episodes.cpp play/engine_downloads.cpp play/engine_install.cpp play/engine_cuda_arch.cpp play/engine_space.cpp play/engine_retry.cpp play/engine_vendor.cpp play/engine_versions.cpp play/engine_online.cpp play/engine_screen.cpp play/engine_switch.cpp play/ed25519.cpp play/engine_tools.cpp play/updater.cpp play/updater_state.cpp play/export_job.cpp play/export_run.cpp play/export_sink.cpp play/first_run.cpp play/first_run_wizard.cpp play/wizard.cpp play/gpu_tier.cpp "${CMAKE_CURRENT_BINARY_DIR}/gpu_tiers_data.cpp" play/home_screen.cpp play/host_choices.cpp play/i18n.cpp play/i18n_fr.cpp play/i18n_fr_settings.cpp play/i18n_fr_image.cpp play/i18n_fr_sound.cpp play/i18n_fr_menu.cpp play/i18n_fr_system.cpp play/i18n_fr_wizard.cpp play/i18n_fr_messages.cpp play/i18n_fr_stats.cpp play/i18n_fr_visible.cpp play/home_view.cpp play/host_facts.cpp play/window_vrr.cpp play/system_peak.cpp play/system_language.cpp play/release_refresh.cpp play/resource_usage.cpp play/display_probe.cpp play/display_follow.cpp play/display_gpu.cpp play/player_probe.cpp play/invalid_copies.cpp play/chain_retreat.cpp play/player_notices.cpp
 
 
     play/external_subtitles.cpp play/frame_queue.cpp play/frame_stats.cpp play/gpu_telemetry.cpp play/input.cpp play/motion_model.cpp play/motion_cut.cpp play/options.cpp play/options_usage.cpp play/osd_text.cpp play/pipeline.cpp
@@ -133,9 +133,8 @@ target_compile_definitions(kirari_app PRIVATE KIRARI_VERSION="${PROJECT_VERSION}
                            KIRARI_UPDATE_PUBKEY_BACKUP="${KIRARI_UPDATE_PUBKEY_BACKUP}"
                            KIRARI_SYSTEM_LIBS="${KIRARI_SYSTEM_LIBS_TEXT}")
 
-# kirari : l'exécutable. Les backends TensorRT, Core ML et Vulkan se cherchent à côté de lui, puis dans
-# l'arbre de construction quand ils y sont construits (TensorRT : KIRARI_WITH_CUDA).
-add_executable(kirari main.cpp)
+# Les backends se cherchent à côté de l'exécutable, puis dans l'arbre de construction en développement.
+add_executable(kirari main.cpp backend_paths.cpp)
 # Windows : une application fenêtrée, sans la console qu'un double clic ouvrait un instant (le lecteur
 # semblait s'ouvrir deux fois). main() reste le point d'entrée ; d'un terminal, leave_lone_console() reprend
 # sa console.
@@ -156,13 +155,61 @@ else()
 endif()
 option(KIRARI_DEV_BACKEND_PATHS "Chercher aussi les backends dans l'arbre de construction"
        ${kirari_dev_backend_paths_default})
-foreach(runtime tensorrt coreml vulkan)
+set(kirari_local_modules)
+set(kirari_local_targets)
+foreach(runtime tensorrt coreml vulkan zml hip slang triton)
   if(TARGET kirari_backend_${runtime})
     string(TOUPPER "${runtime}" upper)
     if(KIRARI_DEV_BACKEND_PATHS)
       target_compile_definitions(kirari PRIVATE KIRARI_BACKEND_${upper}="$<TARGET_FILE:kirari_backend_${runtime}>")
     endif()
     add_dependencies(kirari kirari_backend_${runtime})
+    if(TARGET kirari_backend_zml OR runtime MATCHES "^(hip|slang|triton)$")
+      list(APPEND kirari_local_targets kirari_backend_${runtime})
+      list(APPEND kirari_local_modules COMMAND "${CMAKE_COMMAND}" "-Dsource=$<TARGET_FILE:kirari_backend_${runtime}>"
+        "-Ddestination=$<TARGET_FILE_DIR:kirari>/$<TARGET_FILE_NAME:kirari_backend_${runtime}>"
+        -P "${PROJECT_SOURCE_DIR}/cmake/StageLocalAsset.cmake")
+    endif()
   endif()
 endforeach()
+if(kirari_local_modules)
+  foreach(runtime hip slang triton)
+    if(TARGET kirari_backend_${runtime})
+      list(APPEND kirari_local_modules COMMAND "${CMAKE_COMMAND}"
+        "-Dsource=$<TARGET_FILE_DIR:kirari_backend_${runtime}>/${runtime}"
+        "-Ddestination=$<TARGET_FILE_DIR:kirari>/${runtime}" -P "${PROJECT_SOURCE_DIR}/cmake/StageLocalAsset.cmake")
+    endif()
+  endforeach()
+  # Le module chargé à côté du lecteur cherche son SDK au même endroit. En Debug comme en
+  # Release, l'exécutable du build peut ainsi s'ouvrir directement avec son profil habituel.
+  if(TARGET kirari_zml_build_runtime)
+    list(APPEND kirari_local_modules COMMAND "${CMAKE_COMMAND}" "-Dsource=$<TARGET_FILE_DIR:kirari_backend_zml>/zml"
+      "-Ddestination=$<TARGET_FILE_DIR:kirari>/zml" -P "${PROJECT_SOURCE_DIR}/cmake/StageLocalAsset.cmake")
+  endif()
+  if(TARGET kirari_backend_tensorrt AND KIRARI_TRTEXEC_PACKAGED)
+    get_filename_component(trtexec "${KIRARI_TRTEXEC_PACKAGED}" NAME)
+    if(KIRARI_TRTEXEC_PACKAGED STREQUAL KIRARI_TRTEXEC)
+      list(APPEND kirari_local_modules COMMAND "${CMAKE_COMMAND}" "-Dsource=${KIRARI_TRTEXEC_PACKAGED}"
+        "-Ddestination=$<TARGET_FILE_DIR:kirari>/${trtexec}" -P "${PROJECT_SOURCE_DIR}/cmake/StageLocalAsset.cmake")
+    else()
+      list(APPEND kirari_local_modules COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${KIRARI_TRTEXEC_PACKAGED}" "$<TARGET_FILE_DIR:kirari>/${trtexec}")
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      # Le SHA scellé dans le module porte sur trtexec après son réglage à $ORIGIN.
+      # Ses bibliothèques et les tactiques chargées par libnvinfer sont donc aussi placées à côté.
+      get_filename_component(nvinfer_dir "${KIRARI_NVINFER_LIBRARY}" DIRECTORY)
+      get_filename_component(parser_dir "${KIRARI_NVONNXPARSER_LIBRARY}" DIRECTORY)
+      file(GLOB trt_libraries CONFIGURE_DEPENDS "${nvinfer_dir}/libnvinfer*.so*" "${parser_dir}/libnvonnxparser*.so*")
+      foreach(library IN LISTS trt_libraries)
+        get_filename_component(name "${library}" NAME)
+        list(APPEND kirari_local_modules COMMAND "${CMAKE_COMMAND}" "-Dsource=${library}"
+          "-Ddestination=$<TARGET_FILE_DIR:kirari>/${name}" -P "${PROJECT_SOURCE_DIR}/cmake/StageLocalAsset.cmake")
+      endforeach()
+    endif()
+  endif()
+  add_custom_target(kirari_local_modules ${kirari_local_modules} VERBATIM)
+  add_dependencies(kirari_local_modules ${kirari_local_targets})
+  add_dependencies(kirari kirari_local_modules)
+endif()
 kirari_set_warnings(kirari)

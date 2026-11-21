@@ -19,6 +19,12 @@ on:
       tag:
         description: "Étiquette à poser sur ce commit et à publier (v<VERSION> ou v<VERSION>-rc.N)"
         required: true
+      moteurs_url:
+        description: "URL HTTPS de l’archive des moteurs expérimentaux (avec moteurs_sha256)"
+        type: string
+      moteurs_sha256:
+        description: "SHA-256 de l’archive des moteurs expérimentaux"
+        type: string
 
 permissions:
   contents: read
@@ -45,6 +51,11 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
         run: tools/ci/check-version.sh "$TAG"
+      - name: Source des moteurs expérimentaux
+        env:
+          KIRARI_PORTABLE_URL: ${{ inputs.moteurs_url }}
+          KIRARI_PORTABLE_SHA256: ${{ inputs.moteurs_sha256 }}
+        run: python3 -I tools/release/portable-assets.py source
       - name: Étiquette
         env:
           GH_TOKEN: ${{ github.token }}
@@ -64,6 +75,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
+          KIRARI_PORTABLE_URL: ${{ inputs.moteurs_url }}
+          KIRARI_PORTABLE_SHA256: ${{ inputs.moteurs_sha256 }}
         run: |
-          gh workflow run release.yml -R "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG" -f sans_tests=true
+          moteurs=()
+          if [ -n "$KIRARI_PORTABLE_URL" ]; then
+            moteurs=(-f "moteurs_url=$KIRARI_PORTABLE_URL" -f "moteurs_sha256=$KIRARI_PORTABLE_SHA256")
+          fi
+          gh workflow run release.yml -R "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG" -f sans_tests=true "${moteurs[@]}"
           echo "Release lancée sur $TAG sans tests : Actions > Release" | tee -a "$GITHUB_STEP_SUMMARY"

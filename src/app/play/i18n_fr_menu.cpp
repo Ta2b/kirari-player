@@ -133,13 +133,17 @@ constexpr std::array kMenuTexts{
           "Là où vont les moteurs téléchargés. Les moteurs installés ne sont pas déplacés."},
     Entry{"Default: {}. Free: {}.", "Par défaut : {}. Libre : {}."},
     Entry{"Backend", "Moteur de calcul"},
-    Entry{"What runs upscaling and interpolation. TensorRT is the fastest on NVIDIA RTX cards, but builds "
-          "its engines once per model and size (a few minutes the first time). Vulkan works on every "
-          "graphics card. Recommended: TensorRT on NVIDIA RTX, Vulkan elsewhere.",
-          "Ce qui fait tourner l'agrandissement et l'interpolation. TensorRT est le plus rapide sur les "
-          "cartes NVIDIA RTX, mais construit ses moteurs une fois par modèle et par taille (quelques minutes "
-          "la première fois). Vulkan marche sur toutes les cartes graphiques. Recommandé : TensorRT sur "
-          "NVIDIA RTX, Vulkan ailleurs."},
+    Entry{"ZML (GPU plugin required)", "ZML (greffon GPU requis)"},
+    Entry{"Runs upscaling and interpolation. CUDA native and TensorRT use NVIDIA RTX cards. "
+          "Vulkan supports "
+          "multiple GPU vendors. ZML compiles each model for the selected GPU when its plugin "
+          "is installed. HIP, Slang and Triton accelerate supported models and use Vulkan for other "
+          "networks. Core ML uses Apple Silicon.",
+          "Exécute l’agrandissement et l’interpolation. CUDA natif et TensorRT utilisent les cartes NVIDIA "
+          "RTX. Vulkan prend "
+          "en charge plusieurs marques de GPU. ZML compile chaque modèle pour le GPU choisi lorsque son "
+          "module est installé. HIP, Slang et Triton accélèrent les modèles compatibles et utilisent Vulkan "
+          "pour les autres réseaux. Core ML utilise les puces Apple Silicon."},
     Entry{"Opens the engines screen. Playback resumes at the same spot.",
           "Ouvre l'écran des moteurs. La lecture reprend au même endroit."},
     Entry{"Lets the Vulkan upscaler use reduced precision where the player finds no visible difference; "

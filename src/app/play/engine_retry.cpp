@@ -18,7 +18,9 @@ bool contains(const std::vector<core::EngineId>& list, core::EngineId id) {
 // Le plus rapide des moteurs de réseaux choisis ET installés ; Vulkan, livré partout, sinon.
 void prefer_installed(core::Settings& engines) {
   core::EngineId networks = core::EngineId::Vulkan;
-  for (const core::EngineId id : {core::EngineId::Metal, core::EngineId::TensorRt}) {
+  for (const core::EngineId id :
+       {core::EngineId::Zml, core::EngineId::Slang, core::EngineId::Triton, core::EngineId::Hip,
+        core::EngineId::Metal, core::EngineId::TensorRt, core::EngineId::Cuda}) {
     if (contains(engines.chosen_engines, id) && contains(engines.installed_engines, id)) networks = id;
   }
   for (const core::Usage usage : {core::Usage::Upscale, core::Usage::Interpolate})

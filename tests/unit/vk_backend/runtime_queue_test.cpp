@@ -27,6 +27,9 @@ struct Calls {
   std::atomic<int> run{0};
   std::atomic<int> deferred{0};
   bool full = false;  // run_deferred refuse comme une file d'étapes pleine
+  bool prepare_binary = false;
+  std::stop_source* cancel_build = nullptr;
+  int sources = 0, binaries = 0;
 };
 struct Seen {
   int run = 0;
@@ -91,8 +94,20 @@ class CopyRuntime final : public vk::net::Runtime {
   std::expected<void, Refusal> build(const ModelSpec& /*model*/,
                                      std::span<const vk::net::InputShape> /*inputs*/,
                                      const std::filesystem::path& path, Progress& /*progress*/) override {
+    ++calls_->sources;
     const std::vector<std::byte> bytes{std::byte{1}};
     return vk::net::write_file(path, bytes);
+  }
+  std::optional<bool> compiled_artifact_ready(const std::filesystem::path& path) const override {
+    if (!calls_->prepare_binary) return {};
+    return std::filesystem::is_regular_file(std::filesystem::path(path) += ".binary");
+  }
+  std::expected<void, Refusal> prepare_compiled_artifact(const std::filesystem::path& path,
+                                                         const vk::net::IoNames&, Progress&) override {
+    ++calls_->binaries;
+    if (calls_->cancel_build) calls_->cancel_build->request_stop();
+    const std::vector<std::byte> bytes{std::byte{2}};
+    return vk::net::write_file(std::filesystem::path(path) += ".binary", bytes);
   }
   std::expected<std::unique_ptr<vk::net::RuntimeNet>, Refusal> load(
       const std::filesystem::path& /*path*/) override {
@@ -175,6 +190,52 @@ Seen run_adopted(vk::VulkanBackend& owner, const std::filesystem::path& dir, boo
 }
 
 }  // namespace
+
+TEST_CASE("Le backend prépare une seule fois les deux étages d'un cache", "[vk_backend][runtime][cache]") {
+  TempDir dir("preparation-runtime");
+  auto calls = std::make_shared<Calls>();
+  calls->prepare_binary = true;
+  auto backend = make_backend(dir.path(), {.runtime = [calls](const vk::DeviceCaps&) {
+                                return std::expected<std::shared_ptr<vk::net::Runtime>, Refusal>(
+                                    std::make_shared<CopyRuntime>(calls));
+                              }});
+  ir::test::ModelBuilder m;
+  m.input("x", {1, 3, 8, 8}).node("Relu", {"x"}, {"y"}).output("y");
+  const ModelSpec model = write_model(dir.path(), "deux-etages", m.bytes(), TensorType::F32);
+  const Shape shape{{1, 3, 8, 8}};
+  std::stop_source cancel;
+  Progress progress{.stop = cancel.get_token()};
+  auto build = [&] { return backend->build(model, {.min = shape, .opt = shape, .max = shape}, progress); };
+  SECTION("cache neuf puis ancien cache exécutable ou source seule") {
+    auto artifact = require_value(build());
+    const auto binary = std::filesystem::path(artifact.path) += ".binary";
+    const auto io = std::filesystem::path(artifact.path) += ".io";
+    CHECK(std::filesystem::exists(artifact.path));
+    CHECK(std::filesystem::exists(binary));
+    CHECK(std::filesystem::exists(io));
+    require_value(build());
+    CHECK(calls->sources == 1);
+    CHECK(calls->binaries == 1);
+    REQUIRE(std::filesystem::remove(binary));
+    require_value(build());
+    CHECK(calls->sources == 1);
+    CHECK(calls->binaries == 2);
+    REQUIRE(std::filesystem::remove(io));
+    require_value(build());
+    CHECK(calls->sources == 1);
+    CHECK(calls->binaries == 2);
+    CHECK(vk::net::read_io_names(artifact.path));
+  }
+  SECTION("une annulation au retour du compilateur empêche la publication") {
+    calls->cancel_build = &cancel;
+    require_refusal(build(), RefusalCode::Cancelled);
+    calls->cancel_build = nullptr;
+    progress.stop = {};
+    require_value(build());
+    CHECK(calls->sources == 2);
+    CHECK(calls->binaries == 2);
+  }
+}
 
 TEST_CASE("Runtime : différé sur la file du backend, synchrone sur une file partagée",
           "[vk_backend][runtime]") {

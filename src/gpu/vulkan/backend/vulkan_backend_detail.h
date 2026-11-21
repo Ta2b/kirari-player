@@ -18,6 +18,7 @@ namespace kirari::gpu::vk {
 // les retrouve à partir des Tensor. Partagées entre le backend et ses tampons, qui s'effacent en mourant.
 struct HostViews {
   struct View {
+    std::uintptr_t device = 0;
     std::byte* data = nullptr;
     std::uint64_t bytes = 0;
   };

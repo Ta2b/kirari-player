@@ -3,6 +3,7 @@
 // DCR range les canaux par bloc puis par canal, comme ONNX par défaut ; CRD par
 // canal puis par bloc, comme pixel_shuffle et pixel_unshuffle de PyTorch.
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <optional>
 
@@ -151,11 +152,14 @@ Evaluated eval_reduce_mean(const Node& node, std::span<const Value* const> in,
     for (std::size_t k = 0; k < index.size(); ++k) {
       if (!(**reduced)[k]) at += static_cast<std::size_t>(index[k]) * strides[k];
     }
-    out.f[at] += x.f[pos];
+    out.f[at] += node.op == OpKind::ReduceL2 ? x.f[pos] * x.f[pos] : x.f[pos];
   });
   const std::size_t total = element_count(x.dims);
   const std::size_t per_output = out.f.empty() ? 1 : total / out.f.size();
-  for (float& value : out.f) value /= static_cast<float>(per_output);
+  if (node.op == OpKind::ReduceMean)
+    for (float& value : out.f) value /= static_cast<float>(per_output);
+  if (node.op == OpKind::ReduceL2)
+    for (float& value : out.f) value = std::sqrt(value);
   return std::vector<Value>{std::move(out)};
 }
 

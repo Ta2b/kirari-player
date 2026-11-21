@@ -33,6 +33,9 @@
 
 namespace kirari::gpu::vk::net {
 
+// Dessin et grille des entrées NCHW communs aux contrôles de parité des moteurs.
+float gate_value(const ir::Dims& dims, std::uint64_t index);
+
 inline constexpr double kNetworkDrift = 0.01;
 inline constexpr double kNetworkDriftLow = 0.02;
 // Perte permise sous le plancher des noyaux de référence, en dB. La qualité d'image passe avant la vitesse

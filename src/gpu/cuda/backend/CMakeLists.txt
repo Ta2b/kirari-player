@@ -103,7 +103,9 @@ target_sources(kirari_backend_tensorrt PRIVATE scene_glow.cpp)
 # du pilote ; aucun fichier de NVIDIA n'est livré.
 target_include_directories(kirari_backend_tensorrt SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/third_party/nvidia-optical-flow")
 target_link_libraries(kirari_backend_tensorrt PRIVATE
-  kirari::gpu kirari::gpu_span_fp8 kirari::cuda_fused_keys kirari::cuda_native_mix kirari::cuda_rife_mix kirari::prepare kirari::core_log kirari::dep::spdlog kirari_backend_tensorrt_kernels kirari_backend_span_net
+  kirari::gpu kirari::core_os kirari::gpu_span_fp8 kirari::cuda_fused_keys kirari::cuda_native_mix
+  kirari::cuda_rife_mix kirari::prepare kirari::core_log kirari::dep::spdlog
+  kirari_backend_tensorrt_kernels kirari_backend_span_net
   kirari::dep::tensorrt CUDA::cuda_driver ${CMAKE_DL_LIBS})
 # Le trtexec du paquet est celui de la configuration : son SHA-256 entre dans le module, qui refuse
 # tout autre fichier posé à côté de lui (P1.21). Le repli sur le trtexec de la machine est réservé

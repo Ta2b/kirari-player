@@ -1,5 +1,6 @@
 #include "app/play/host_choices.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <utility>
@@ -8,6 +9,7 @@
 #include "app/play/default_player.h"
 #include "app/play/engine_install.h"
 #include "app/play/engine_screen.h"
+#include "app/play/engine_switch.h"
 #include "app/play/host_facts.h"
 #include "app/play/i18n.h"
 #include "app/play/machine_calibration.h"
@@ -29,7 +31,8 @@ void fill_host_choices(SettingsChoices& choices, const PlaceboScreen& screen, co
   // Le moteur en service : celui de la bibliothèque chargée, ou à l'accueil le préféré s'il est installé.
   choices.calibration_host = {.gpu = machine.name,
                               .display_height = display_height(screen.window()),
-                              .tensorrt = choices.engine_in_use == core::EngineId::TensorRt &&
+                              .tensorrt = (choices.engine_in_use == core::EngineId::TensorRt ||
+                                           choices.engine_in_use == core::EngineId::Cuda) &&
                                           tensorrt_backend_present(catalog, paths),
                               .driver = machine.driver,
                               .display_hz = display_refresh_hz(screen.window())};
@@ -50,7 +53,13 @@ void fill_host_choices(SettingsChoices& choices, const PlaceboScreen& screen, co
   choices.tensor_cores = machine.tensor_cores;
   choices.nvidia = vendor_from_pci(screen.device_facts().pci_vendor) == GpuVendor::Nvidia;
   choices.luts_dir = paths::luts(paths);
-  choices.switchable = installed_switchable(catalog, paths);
+  choices.switchable = installed_switchable(catalog, paths, machine.vendor);
+  choices.zml_needs_runtime =
+      !std::ranges::contains(choices.switchable, core::EngineId::Zml) &&
+      std::ranges::any_of(backend_candidates(catalog, paths), [](const std::filesystem::path& path) {
+        std::error_code ec;
+        return engine_of_library(path) == core::EngineId::Zml && std::filesystem::is_regular_file(path, ec);
+      });
   choices.engines_dir_default = prepare::utf8_path(paths::backends_install(paths));
   choices.place = place_of(paths);
   choices.settings_dir = settings_dir;

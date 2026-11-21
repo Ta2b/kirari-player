@@ -70,7 +70,7 @@ std::expected<ScreenTiming, Refusal> FakeScreen::show(const ShowRequest& request
             .tint = request.tint,
             .redraws = request.redraws_expected});
   return ScreenTiming{
-      .acquire_us = acquire_us, .render_us = 1000, .present_us = now_us, .queue_wait_us = queue_wait_us};
+      .acquire_us = acquire_us, .render_us = render_us, .present_us = now_us, .queue_wait_us = queue_wait_us};
 }
 
 SlotFree FakeScreen::retire(const RingFrame& frame) {

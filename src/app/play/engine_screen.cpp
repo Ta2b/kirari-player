@@ -129,7 +129,9 @@ namespace {
 
 // Un moteur des réseaux ajouté entre before et after.
 bool network_added(const core::Settings& before, const core::Settings& after) {
-  const std::vector<core::EngineId> networks = {core::EngineId::TensorRt, core::EngineId::Metal};
+  const std::vector<core::EngineId> networks = {
+      core::EngineId::TensorRt, core::EngineId::Metal,  core::EngineId::Zml, core::EngineId::Hip,
+      core::EngineId::Slang,    core::EngineId::Triton, core::EngineId::Cuda};
   return std::ranges::any_of(networks,
                              [&](core::EngineId id) { return chosen(after, id) && !chosen(before, id); });
 }
@@ -392,7 +394,7 @@ std::expected<bool, Refusal> run_engine_screen(const EngineScreen& s, core::Sett
   // La langue d'avant l'assistant : choisie à l'écran Bienvenue, appliquée en direct, elle revient si l'on
   // annule (B25-03).
   const i18n::Language language_before = i18n::language();
-  FirstRunView view = first_run_view(gpu, engines_here(s.options, s.paths, s.catalog, gpu.name), engines);
+  FirstRunView view = first_run_view(gpu, engines_here(s.options, s.paths, s.catalog, gpu), engines);
   // L'assistant du premier lancement (ou de --first-run, ou relancé depuis les paramètres) ; rouvert depuis
   // l'onglet Moteurs, l'ancien écran des seuls moteurs.
   const bool wizard_mode = !revisit || s.restart_wizard;
@@ -410,7 +412,7 @@ std::expected<bool, Refusal> run_engine_screen(const EngineScreen& s, core::Sett
     view.tier_detail = std::string(tier_summary(estimate.tier));
     host_notes(view, gpu, s.screen.window());
     view.retranslate =
-        retranslation(gpu, engines_here(s.options, s.paths, s.catalog, gpu.name), engines, estimate.tier,
+        retranslation(gpu, engines_here(s.options, s.paths, s.catalog, gpu), engines, estimate.tier,
                       display_height(s.screen.window()), display_refresh_hz(s.screen.window()));
     start_from_saved(view.wizard, play_path);
   }
@@ -466,11 +468,10 @@ std::vector<std::filesystem::path> backend_candidates(const EngineCatalog& catal
   return out;
 }
 
-std::vector<core::EngineId> installed_switchable(const EngineCatalog& catalog, const PlayerPaths& paths) {
+std::vector<core::EngineId> installed_switchable(const EngineCatalog& catalog, const PlayerPaths& paths,
+                                                 GpuVendor vendor) {
   std::vector<std::filesystem::path> present = backend_candidates(catalog, paths);
-  std::error_code error;
-  std::erase_if(present,
-                [&](const std::filesystem::path& path) { return !std::filesystem::exists(path, error); });
+  std::erase_if(present, [&](const auto& path) { return !backend_available(path, vendor); });
   return switchable_engines(present);
 }
 
@@ -483,10 +484,11 @@ std::expected<std::shared_ptr<BackendLibrary>, Refusal> open_backend(const Engin
   // Charger TensorRT et créer l'instance d'essai prend plusieurs secondes : sur un thread, la fenêtre
   // pompée (P2.12).
   // Des copies : la croix laisse ce thread à son sort, l'appelant rend la main (pumped_task.h).
+  auto init = probe;
+  init.trials |= cuda_inference_mode(engines);
   auto library = run_pumped<std::shared_ptr<BackendLibrary>>(
-      "backend", [within = backends_within(candidates, engines), probe] {
-        return BackendLibrary::choose(within, probe);
-      });
+      "backend",
+      [within = backends_within(candidates, engines), init] { return BackendLibrary::choose(within, init); });
   // Un moteur préféré qui refuse l'appareil laisse sa place sans bruit : sa raison va au journal.
   // Le module avec le dossier de sa version (<moteurs>/<moteur>/<version>/<module>) : quel paquet est
   // installé (B39-02).
@@ -550,7 +552,7 @@ std::expected<bool, Refusal> handle_engine_change(Player& p, const EngineChange&
   }
   p.library = std::move(*library);
   log->info("moteurs : {}", core::to_utf8(p.library->path().filename()));
-  const std::optional<core::EngineId> now = engine_of_library(p.library->path());
+  const auto now = selected_engine(p.library->path(), p.engines);
   const std::string name =
       now ? std::string(engine_label(*now)) : core::to_utf8(p.library->path().filename());
   if (use != nullptr && now != use->id) {
@@ -558,7 +560,8 @@ std::expected<bool, Refusal> handle_engine_change(Player& p, const EngineChange&
     // cartes) : la cause se dit, avec où la changer (B37-01).
     const auto cards = p.screen.device_names();
     const bool rtx_elsewhere =
-        use->id == core::EngineId::TensorRt && gpu_facts(p.screen).vendor != GpuVendor::Nvidia &&
+        (use->id == core::EngineId::TensorRt || use->id == core::EngineId::Cuda) &&
+        gpu_facts(p.screen).vendor != GpuVendor::Nvidia &&
         std::ranges::any_of(cards, [](const std::string& card) { return card.contains("RTX"); });
     p.notice = rtx_elsewhere ? i18n::ui_tr_format(
                                    "{} does not open on this GPU: choose the NVIDIA card in "
@@ -575,9 +578,9 @@ std::expected<bool, Refusal> handle_engine_change(Player& p, const EngineChange&
 std::string fallback_note(const core::Settings& engines, const std::filesystem::path& library,
                           const GpuFacts& gpu, std::optional<RefusalCode> refused) {
   const std::optional<core::EngineId> preferred = engines.preferred[usage(core::Usage::Upscale)];
-  const std::optional<core::EngineId> in_use = engine_of_library(library);
+  const auto in_use = selected_engine(library, engines);
   if (!preferred || !in_use || preferred == in_use) return {};
-  if (*preferred == core::EngineId::TensorRt) {
+  if (*preferred == core::EngineId::TensorRt || *preferred == core::EngineId::Cuda) {
     if (const std::string problem = tensorrt_driver_problem(gpu); !problem.empty())
       return i18n::tr_format("{}: {} replaces it.", problem, engine_label(*in_use));
   }
