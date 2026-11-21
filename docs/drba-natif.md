@@ -69,6 +69,27 @@ Les quatre passages affichent environ 165 nouvelles images/s, sans abandon.
 Le binaire final confirme 13,248 µs sur 671 nœuds, avec 164,84 nouvelles
 images/s et un abandon sur cette passe.
 
+### Entrée B2 à 510 tuiles
+
+La colle XOR compacte de B2 avec convolution de pas 2 utilise une tuile
+de 16 × 4 sur Ada 60 SM en 1920 × 1088. Les 510 tuiles couvrent exactement
+les 240 × 136 sorties et réutilisent la disposition des fragments fixes
+du cache de la tuile large. Les autres géométries et l'entrée sans colle
+compacte reprennent leur chemin habituel. Les essais à froid et avec
+réemploi, en mode image et mouvement, comparent 133 693 440 codes FP16
+bit à bit dans le lecteur.
+
+Sous SPAN Performance ×8, les quatre passages appariés donnent une
+médiane B2 de 93,944 → 84,159 µs. Pour comparer au même palier, la
+géométrie compacte représente 3,159 GFLOP à froid et 1,805 GFLOP à
+chaud avec ses sommes FP32. Au débit Tensor de 86,75 TFLOP/s, ses bornes
+sont de 36,41 et 20,81 µs. La part atteinte sur ce noyau passe de
+**33,5–33,9 % à 36,9–37,1 %** à froid et de **22,7–22,9 % à 25,4 %**
+à chaud. La borne décrit les produits Tensor de l'entrée B2 fusionnée.
+Le Winograd des 3×3 de pas 1 concerne les couches suivantes du bloc.
+Le p95 du moteur entier passe de 0,73 à 0,71–0,72 ms. Les deux passages
+candidats affichent 165,00 nouvelles images/s sans abandon via Wayland.
+
 ## Proposition initiale du 19 novembre 2026
 
 Le plan ci-dessous visait les trois blocs et l'encodeur. Les noms, estimations et options correspondent

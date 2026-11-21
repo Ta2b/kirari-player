@@ -189,6 +189,13 @@ class Native final : public DrbaTailNative {
  public:
   cudaError_t setup(std::span<const RifeNativeConv> layers, cudaStream_t stream) {
     if (!compatible_recipe(layers)) return cudaErrorInvalidValue;
+    int device = 0, major = 0, minor = 0, sm_count = 0;
+    narrow_ingress_ =
+        cudaGetDevice(&device) == cudaSuccess &&
+        cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
+        cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) == cudaSuccess &&
+        cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device) == cudaSuccess &&
+        major == 8 && minor == 9 && sm_count == 60;
     const std::vector<float> slopes(static_cast<std::size_t>(kChannels), 0.2F);
     if (auto status = upload_sync(slopes_, slopes, stream); status != cudaSuccess) return status;
     if (auto status =
@@ -216,7 +223,16 @@ class Native final : public DrbaTailNative {
       if (auto status = upload_sync(gpu.bias, dense.bias, stream); status != cudaSuccess) return status;
       if (auto status = upload_sync(gpu.scale, layer.scale, stream); status != cudaSuccess) return status;
     }
-    return workspace_.allocate(workspace_bytes());
+    const auto bytes = workspace_bytes();
+    if (auto status = workspace_.allocate(bytes); status != cudaSuccess) return status;
+    if (!narrow_ingress_) return cudaSuccess;
+    // La grille étroite ne calcule pas les fragments hors image. Le repli large
+    // peut lire ces emplacements sans produire de pixel à partir d'eux.
+    if (auto status =
+            cudaMemsetAsync(workspace_.as<std::byte>() + kCacheOffset, 0, bytes - kCacheOffset, stream);
+        status != cudaSuccess)
+      return status;
+    return cudaStreamSynchronize(stream);
   }
 
   std::size_t workspace_bytes() const {
@@ -239,7 +255,17 @@ class Native final : public DrbaTailNative {
       if ((!reuse && !compact_tile) || glue->width != entry.iw || glue->height != entry.ih ||
           glue->x == nullptr || glue->y == nullptr || glue->pair01 == nullptr)
         return cudaErrorInvalidValue;
-      if (!reuse)
+      const bool narrow =
+          narrow_ingress_ && compact_tile && glue->full_width == 1920 && glue->full_height == 1088;
+      if (narrow) {
+        constexpr int tile = drba_hot::kNarrowWidth;
+        constexpr int smem = drba_hot::kFusedSmem<true, tile>;
+        const dim3 grid((entry.ow + tile - 1) / tile, first.layer.grid.y);
+        if (reuse)
+          drba_hot::conv_glue<true, false, tile><<<grid, rn::kThreads, smem, stream>>>(entry, *glue, cache);
+        else
+          drba_hot::conv_glue<true, true, tile><<<grid, rn::kThreads, smem, stream>>>(entry, *glue, cache);
+      } else if (!reuse)
         drba_hot::conv_glue<true, true>
             <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<true>, stream>>>(entry, *glue, cache);
       else if (compact_tile)
@@ -296,6 +322,7 @@ class Native final : public DrbaTailNative {
   std::array<Residual, 8> residuals_;
   rn::Buffer slopes_;
   rn::Buffer workspace_;
+  bool narrow_ingress_ = false;
 };
 
 }  // namespace

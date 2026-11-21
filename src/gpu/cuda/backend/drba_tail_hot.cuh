@@ -18,12 +18,21 @@ using drba_sample::SourceZ;
 using drba_sample::Tap;
 using drba_sample::tap_of;
 constexpr int kKc = 16, kCt = 48, kRows = 1, kS = 2, kKh = 3;
-using G = rn::Geometry<kKh, kS, kRows>;
-constexpr int kCells = G::kIR * G::kIC;
+constexpr int kNarrowWidth = 16;
+constexpr int kInputWidth = 480, kInputHeight = 272;
+
+template <int Width>
+struct GlueTile {
+  static constexpr int kTH = rn::kWarps * kRows;
+  static constexpr int kIR = (kTH - 1) * kS + kKh;
+  static constexpr int kIC = (Width - 1) * kS + kKh;
+  static constexpr int kEven = (kIC + 1) / 2;
+  static constexpr int kCells = kIR * kIC;
+};
 template <bool Xor>
 constexpr int input_pitch = Xor ? kKc : kKc + 8;
-template <bool Xor>
-constexpr int kFusedSmem = kCells * (input_pitch<Xor> * sizeof(__half) + (Xor ? 24 : 8));
+template <bool Xor, int Width = rn::kTW>
+constexpr int kFusedSmem = GlueTile<Width>::kCells * (input_pitch<Xor> * sizeof(__half) + (Xor ? 24 : 8));
 
 struct CompactTap {
   unsigned anchor;
@@ -77,9 +86,11 @@ __device__ __forceinline__ unsigned half_pair(__half a, __half b) {
   return static_cast<unsigned>(__half_as_ushort(a)) | (static_cast<unsigned>(__half_as_ushort(b)) << 16U);
 }
 
-template <bool Xor>
+template <bool Xor, int Width>
 __device__ __forceinline__ void set_flows(Motion<Xor>* flows, const DrbaGlueParams& g, int tx, int ty,
                                           int tid) {
+  using G = GlueTile<Width>;
+  constexpr int kCells = G::kCells;
   const SourceZ z{static_cast<const __half*>(g.y), g.height / 2, g.width / 2};
   for (int i = tid; i < kCells; i += rn::kThreads) {
     const int x = tx + i % G::kIC, y = ty + i / G::kIC;
@@ -127,9 +138,11 @@ __device__ __forceinline__ uint4 pack_quad(const Pixel& p) {
           half_pair(p.channel<base + 6>(), p.channel<base + 7>())};
 }
 
-template <bool Xor, int Q>
+template <bool Xor, int Q, int Width>
 __device__ __forceinline__ void set_dynamic(__half* tile, const Motion<Xor>* flows, const DrbaGlueParams& g,
                                             int tx, int ty, int tid, float tau, bool before) {
+  using G = GlueTile<Width>;
+  constexpr int kCells = G::kCells;
   static_assert(Q >= 3 && Q <= 5);
   const int area = g.width * g.height;
   const auto* src = static_cast<const __half*>(g.x);
@@ -156,9 +169,11 @@ __device__ __forceinline__ void set_dynamic(__half* tile, const Motion<Xor>* flo
   }
 }
 
-template <bool Xor>
+template <bool Xor, int Width>
 __device__ __forceinline__ void set_controls(__half* tile, const Motion<Xor>* flows, const DrbaGlueParams& g,
                                              int tx, int ty, int tid) {
+  using G = GlueTile<Width>;
+  constexpr int kCells = G::kCells;
   const SourceZ z{static_cast<const __half*>(g.y), g.height / 2, g.width / 2};
   for (int i = tid; i < kCells; i += rn::kThreads) {
     const int col = i % G::kIC, row = i / G::kIC;
@@ -191,14 +206,17 @@ __device__ __forceinline__ void set_controls(__half* tile, const Motion<Xor>* fl
   }
 }
 
-template <bool Prefetch = true>
-__device__ __forceinline__ void accumulate_xor(rn::Frag<rn::Acc::kF32> (&acc)[2][6], const __half* tile,
-                                               const uint4* w, int q, int warp, int lane) {
+template <bool Prefetch, int Width>
+__device__ __forceinline__ void accumulate_xor(rn::Frag<rn::Acc::kF32> (&acc)[Width / 16][6],
+                                               const __half* tile, const uint4* w, int q, int warp,
+                                               int lane) {
+  using G = GlueTile<Width>;
   constexpr int groups = kCt / 16, chunks = 7;
   const std::uint32_t base = rn::smem_u32(tile);
   const auto* wl = w + lane;
   const auto fetch = [&](uint4(&b)[groups], int tap) {
-    const long ks = static_cast<long>(tap) * chunks + q;
+    using Index = std::conditional_t<Width == kNarrowWidth, int, long>;
+    const Index ks = static_cast<Index>(tap) * chunks + q;
 #pragma unroll
     for (int n = 0; n < groups; ++n) b[n] = __ldg(wl + (ks * groups + n) * 32);
   };
@@ -214,15 +232,15 @@ __device__ __forceinline__ void accumulate_xor(rn::Frag<rn::Acc::kF32> (&acc)[2]
     }
     const int dy = tap / 3, dx = tap % 3;
     const int col0 = dx == 1 ? G::kEven : dx / 2;
-    std::uint32_t a[2][4];
+    std::uint32_t a[Width / 16][4];
 #pragma unroll
-    for (int f = 0; f < 2; ++f) {
+    for (int f = 0; f < Width / 16; ++f) {
       const int pixel = (2 * warp + dy) * G::kIC + 16 * f + col0 + (lane & 15);
       const int half = vector_xor(pixel, lane >> 4);
       rn::ldmatrix4(a[f], base + static_cast<std::uint32_t>((pixel * input_pitch<true> + half * 8) * 2));
     }
 #pragma unroll
-    for (int f = 0; f < 2; ++f) {
+    for (int f = 0; f < Width / 16; ++f) {
 #pragma unroll
       for (int n = 0; n < groups; ++n) {
         acc[f][2 * n].mma(a[f], b[n].x, b[n].y);
@@ -237,9 +255,10 @@ __device__ __forceinline__ void accumulate_xor(rn::Frag<rn::Acc::kF32> (&acc)[2]
 
 // Les plans couvrent une largeur paire et x0 est pair. Charger les pixels
 // par paires laisse seulement le bord gauche impair à lire séparément.
-template <bool Xor>
+template <bool Xor, int Width = rn::kTW>
 __device__ __forceinline__ void load_x2_planes(__half* tile, const __half* source, int width, int height,
                                                int channels, int q, int x0, int y0) {
+  using G = GlueTile<Width>;
   constexpr int pairs = (G::kIC - 1) / 2;
   const int tid = static_cast<int>(threadIdx.x), area = width * height;
   const auto dst = [tile](int r, int col, int c) -> __half& {
@@ -263,27 +282,73 @@ __device__ __forceinline__ void load_x2_planes(__half* tile, const __half* sourc
   }
 }
 
-template <bool Xor, bool Cold = false>
-__global__ void __launch_bounds__(rn::kThreads, Xor ? 3 : 2)
+__device__ __forceinline__ void store_narrow(const rn::Frag<rn::Acc::kF32> (&acc)[1][6], __half* tile,
+                                             rn::Params p, int ty, int tx, int warp, int lane, int tid) {
+  constexpr int pitch = kCt + 8;
+#pragma unroll
+  for (int n = 0; n < 6; ++n) {
+    const int c = 8 * n + 2 * (lane & 3);
+    const auto bias = __ldg(reinterpret_cast<const float2*>(p.bias + c));
+#pragma unroll
+    for (int m = 0; m < 2; ++m) {
+      const int x = (lane >> 2) + 8 * m;
+      const auto a = acc[0][n].pair(m);
+      *reinterpret_cast<__half2*>(tile + (warp * kNarrowWidth + x) * pitch + c) =
+          rn::to_half2(a.x + bias.x, a.y + bias.y);
+    }
+  }
+  __syncthreads();
+  for (int i = tid; i < GlueTile<kNarrowWidth>::kTH * kNarrowWidth * 6; i += rn::kThreads) {
+    const int q = i / 6, c = (i % 6) * 8;
+    const int y = ty + q / kNarrowWidth, x = tx + q % kNarrowWidth;
+    if (x >= p.ow || y >= p.oh) continue;
+    const long pixel = static_cast<long>(y) * p.ow + x;
+    const auto v = *reinterpret_cast<const uint4*>(tile + q * pitch + c);
+    *reinterpret_cast<uint4*>(p.out + pixel * p.out_ld + c) = rn::finish8(v, p, pixel, c);
+  }
+}
+
+template <bool Xor, bool Cold = false, int Width = rn::kTW>
+__global__ void __launch_bounds__(rn::kThreads, Width == kNarrowWidth ? 4 : (Xor ? 3 : 2))
     conv_glue(rn::Params p, DrbaGlueParams g, float4* cache) {
+  static_assert(Width == rn::kTW || (Xor && Width == kNarrowWidth));
   static_assert(!Cold || Xor);
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ != 890
   // Cette fusion est sélectionnée uniquement avec le bloc fin natif Ada.
   __trap();
 #else
+  using G = GlueTile<Width>;
+  constexpr int kCells = G::kCells;
+  if constexpr (Width == kNarrowWidth) {
+    g.height = p.ih = kInputHeight;
+    g.width = p.iw = kInputWidth;
+    g.full_width = 4 * kInputWidth;
+    g.full_height = 4 * kInputHeight;
+    p.oh = kInputHeight / 2;
+    p.ow = kInputWidth / 2;
+    p.out_ld = kCt;
+  }
   extern __shared__ __align__(16) unsigned char raw[];
   auto* const tile = reinterpret_cast<__half*>(raw);
   auto* const flows = reinterpret_cast<Motion<Xor>*>(tile + kCells * input_pitch<Xor>);
   const int tid = static_cast<int>(threadIdx.x), warp = tid / 32, lane = tid & 31;
   const int ty = static_cast<int>(blockIdx.y) * G::kTH;
-  const int tx = static_cast<int>(blockIdx.x) * rn::kTW;
+  const int tx = static_cast<int>(blockIdx.x) * Width;
   const int left = tx * kS - 1, top = ty * kS - 1;
-  const auto block = static_cast<std::size_t>(blockIdx.y) * gridDim.x + blockIdx.x;
-  auto* partial = cache + (12 * block * rn::kThreads) + tid;
+  auto* partial = cache + tid;
+  if constexpr (Width == kNarrowWidth) {
+    // Une demi-tuile occupe exactement son fragment du cache historique.
+    constexpr int stock_width = (kInputWidth / 2 + rn::kTW - 1) / rn::kTW;
+    const auto block = static_cast<std::size_t>(blockIdx.y) * stock_width + blockIdx.x / 2;
+    partial += (12 * block + 6 * (blockIdx.x % 2)) * rn::kThreads;
+  } else {
+    const auto block = static_cast<std::size_t>(blockIdx.y) * gridDim.x + blockIdx.x;
+    partial += 12 * block * rn::kThreads;
+  }
   constexpr int kChunks = 7;
-  rn::Frag<rn::Acc::kF32> acc[2][6];
+  rn::Frag<rn::Acc::kF32> acc[Width / 16][6];
 #pragma unroll
-  for (int f = 0; f < 2; ++f)
+  for (int f = 0; f < Width / 16; ++f)
 #pragma unroll
     for (int n = 0; n < 6; ++n) {
       if constexpr (Cold) {
@@ -299,21 +364,22 @@ __global__ void __launch_bounds__(rn::kThreads, Xor ? 3 : 2)
   if constexpr (Cold) {
 #pragma unroll 1
     for (int q = 0; q < 3; ++q) {
-      load_x2_planes<true>(tile, static_cast<const __half*>(g.x), g.width, g.height, kKc, q, left + 1, top);
+      load_x2_planes<true, Width>(tile, static_cast<const __half*>(g.x), g.width, g.height, kKc, q, left + 1,
+                                  top);
       __syncthreads();
       // La première partie dispose de moins de registres car elle écrit le cache.
-      accumulate_xor<false>(acc, tile, p.w, q, warp, lane);
+      accumulate_xor<false, Width>(acc, tile, p.w, q, warp, lane);
       __syncthreads();
     }
 #pragma unroll
-    for (int f = 0; f < 2; ++f)
+    for (int f = 0; f < Width / 16; ++f)
 #pragma unroll
       for (int n = 0; n < 6; ++n) {
         const auto& a = acc[f][n].r;
         partial[(6 * f + n) * rn::kThreads] = make_float4(a[0], a[1], a[2], a[3]);
       }
   }
-  set_flows<Xor>(flows, g, left, top, tid);
+  set_flows<Xor, Width>(flows, g, left, top, tid);
   __syncthreads();
 
   const auto full_area = static_cast<std::size_t>(g.full_width) * g.full_height;
@@ -324,28 +390,32 @@ __global__ void __launch_bounds__(rn::kThreads, Xor ? 3 : 2)
     if (q != 3) __syncthreads();
     switch (q) {
       case 3:
-        set_dynamic<Xor, 3>(tile, flows, g, left, top, tid, tau, before);
+        set_dynamic<Xor, 3, Width>(tile, flows, g, left, top, tid, tau, before);
         break;
       case 4:
-        set_dynamic<Xor, 4>(tile, flows, g, left, top, tid, tau, before);
+        set_dynamic<Xor, 4, Width>(tile, flows, g, left, top, tid, tau, before);
         break;
       case 5:
-        set_dynamic<Xor, 5>(tile, flows, g, left, top, tid, tau, before);
+        set_dynamic<Xor, 5, Width>(tile, flows, g, left, top, tid, tau, before);
         break;
       default:
-        set_controls<Xor>(tile, flows, g, left, top, tid);
+        set_controls<Xor, Width>(tile, flows, g, left, top, tid);
     }
     __syncthreads();
     if constexpr (Xor)
-      accumulate_xor(acc, tile, p.w, q, warp, lane);
+      accumulate_xor<true, Width>(acc, tile, p.w, q, warp, lane);
     else
       rn::accumulate<kKc, kCt, kKh, kS, kRows, rn::Acc::kF32, false>(acc, tile, p.w, q, kChunks, 0, 9, warp,
                                                                      lane);
   }
   __syncthreads();
-  rn::stage<kCt, kRows, rn::Acc::kF32>(acc, tile, p.bias, warp, lane);
-  __syncthreads();
-  rn::store<kCt, kRows, rn::Out::kNhwc>(tile, p, ty, tx, 0, 0);
+  if constexpr (Width == kNarrowWidth) {
+    store_narrow(acc, tile, p, ty, tx, warp, lane, tid);
+  } else {
+    rn::stage<kCt, kRows, rn::Acc::kF32>(acc, tile, p.bias, warp, lane);
+    __syncthreads();
+    rn::store<kCt, kRows, rn::Out::kNhwc>(tile, p, ty, tx, 0, 0);
+  }
 #endif
 }
 }  // namespace
