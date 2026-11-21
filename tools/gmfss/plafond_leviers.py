@@ -23,6 +23,7 @@ Variantes, chacune sur les seules couches qu'elle touche :
     python3 -I tools/gmfss/plafond_leviers.py FUSION.onnx --height 1152 --width 1920
 
     --modele-actuel calcule aussi la borne avec les canaux des MMA, la queue composée sur Ada et F(2×2,3×3).
+    Ajouter --sommes-fp32 pour le GridNet CUDA direct à accumulateurs FP32. Les activations restent en FP16.
 """
 import argparse
 import collections
@@ -95,7 +96,7 @@ def layer_time(row, variant):
     return flop / PEAK["fp8"], (acts / 2 + weights / 2) / BANDWIDTH  # fp8, octets FP8
 
 
-def native_cost(row, winograd):
+def native_cost(row, winograd, sums):
     _, name, flop, acts, weights, eligible, (cin, cout, h, w) = row
     pin, pout = ((c + 15) // 16 * 16 for c in (cin, cout))
     padding = pin * pout / (cin * cout)
@@ -104,9 +105,9 @@ def native_cost(row, winograd):
         tiles = ((h + 1) // 2) * ((w + 1) // 2)
         # Bᵀ : 4 additions par passage 1D. Aᵀ : 4 additions par passage, sur 4 puis 2 points.
         transforms = tiles * (32 * cin + 24 * cout)
-        math = tiles * 16 * 2 * pin * pout / PEAK["f16"] + transforms / CUDA_RATE
+        math = tiles * 16 * 2 * pin * pout / PEAK[sums] + transforms / CUDA_RATE
         return math, (acts + packed_weights * 16 / 9) / BANDWIDTH
-    peak = PEAK["f32"] if "/conv_last/" in name else PEAK["f16"]
+    peak = PEAK["f32"] if "/conv_last/" in name else PEAK[sums]
     return flop * padding / peak, (acts + packed_weights) / BANDWIDTH
 
 
@@ -123,19 +124,20 @@ def folded_cost(h, w):
     return math, bandwidth
 
 
-def report_current(rows, h, w):
+def report_current(rows, h, w, sums):
     last = [r for r in rows if "/conv_last/" in r[1] or "/upsample/upsample.0/" in r[1]]
     expected = {(64, 3, h, w), (64, 256, h // 2, w // 2)}
     if len(rows) != 45 or len(last) != 2 or {r[-1] for r in last} != expected:
         raise ValueError("formes inattendues pour la queue GridNet composée")
-    print(f"GridNet à {h} × {w}, {len(rows)} convolutions, RTX 4070 Ti")
+    precision = "sommes FP32" if sums == "f32" else "sommes FP16, sortie FP32"
+    print(f"GridNet à {h} × {w}, {len(rows)} convolutions, RTX 4070 Ti, {precision}")
     print("Calcul et durée calcul/octets couche par couche, pour le GridNet seul")
     print(f"  {'voie':35s} {'calcul (ms)':>12s} {'borne (ms)':>12s} {'cible 90 % (ms)':>16s}")
     for label, folded, winograd in (
             ("direct avec canaux MMA", False, False),
             ("queue composée", True, False),
             ("queue composée + Winograd F(2×2)", True, True)):
-        costs = [native_cost(r, winograd) for r in rows if not folded or r not in last]
+        costs = [native_cost(r, winograd, sums) for r in rows if not folded or r not in last]
         if folded:
             costs.append(folded_cost(h, w))
         compute = 1000 * sum(c[0] for c in costs)
@@ -149,12 +151,16 @@ def main():
     parser.add_argument("--height", type=int, default=1152)
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--modele-actuel", action="store_true", help="avec le calcul de la queue composée Ada")
+    parser.add_argument("--sommes-fp32", action="store_true", help="sommes FP32 dans le modèle natif")
     args = parser.parse_args()
+    if args.sommes_fp32 and not args.modele_actuel:
+        parser.error("--sommes-fp32 demande --modele-actuel")
     if args.modele_actuel:
         if (args.height, args.width) != (1152, 1920):
             parser.error("la queue composée actuelle est qualifiée uniquement à 1152 × 1920")
         model = inferred(args.model, args.height, args.width, symbolic=False)
-        report_current(conv_layers(model, (args.height, args.width)), args.height, args.width)
+        report_current(conv_layers(model, (args.height, args.width)), args.height, args.width,
+                       "f32" if args.sommes_fp32 else "f16")
         return
     rows = conv_layers(inferred(args.model, args.height, args.width))
     variants = ["direct", "wino23", "wino43", "fp8", "fp8, octets FP8"]

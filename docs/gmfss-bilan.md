@@ -856,3 +856,25 @@ La fusion GPU passe de 31,98–32,42 à 28,56–28,57 ms. Le p95 de
 l'intervalle de présentation reste autour de 72,7 ms. Le gain GPU se
 répète, tandis que le débit affiché dépend aussi du nombre de paires
 calculées en avance et du rattrapage d'horloge.
+
+### Palier du GridNet strict FP32
+
+`plafond_leviers.py --modele-actuel --sommes-fp32` calcule le palier de
+GridNet seul avec des entrées FP16 et des sommes FP32, sur l'export officiel
+à 1 152 × 1 920. Il applique le débit FP32 des Tensor Cores aux canaux
+complétés jusqu'aux groupes MMA, ajoute les transformées Winograd et prend,
+par couche, le plus grand des temps de calcul et de transfert. Il remplace
+les deux dernières convolutions par le modèle de leur queue composée.
+Ce modèle aboutit à 11,037 ms et place les 90 % à 12,263 ms. La recette
+Winograd et queue composée reste à qualifier avec les sommes FP32 sur
+l'ensemble du réseau.
+
+| Rejeu GridNet C8 | CT32 | CT32 et CT64 sélectionnés | Part du palier avant et après |
+| --- | ---: | ---: | ---: |
+| 960,40 s | 28,483 ms | 24,956 ms | 38,8 % → 44,2 % |
+| 983,00 s | 28,154 ms | 24,970 ms | 39,2 % → 44,2 % |
+
+Les temps sont les sommes des médianes des 45 noyaux sur les mêmes entrées.
+Ils excluent la paire, les projections, IFNet et la composition. Le palier
+de 7,915 ms des mesures historiques utilise des sommes FP16 et concerne
+une autre recette.
