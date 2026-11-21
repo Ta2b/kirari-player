@@ -276,8 +276,11 @@ TensorRtBackend::~TensorRtBackend() {
   if (!any_lane()) return;
   cudaSetDevice(device_);
   if (scene_flow_) {
-    if (const std::string report = scene_flow_->finish_roundtrip(); !report.empty())
-      log(BackendLogLevel::Info, report);
+    try {
+      if (const std::string report = scene_flow_->finish_roundtrip(); !report.empty())
+        log(BackendLogLevel::Info, report);
+    } catch (...) {  // NOLINT(bugprone-empty-catch) : le bilan ne doit pas interrompre la libération CUDA
+    }
   }
   scene_flow_.reset();  // sa file finie, avant les voies et le profil
   destroy_textures();
@@ -317,7 +320,7 @@ TensorRtBackend::~TensorRtBackend() {
 }
 
 // Le profil GPU de la séance au journal, à la destruction (--one-lane pour le coût propre de chaque moteur).
-void TensorRtBackend::log_profile() {
+void TensorRtBackend::log_profile() noexcept try {
   if (const int used = std::popcount(used_lanes_); used > 1 && !stages_.empty()) {
     log(BackendLogLevel::Info,
         std::format("profil GPU · {} voies en parallèle : chaque temps court sur la file de son étape, "
@@ -340,6 +343,7 @@ void TensorRtBackend::log_profile() {
     if (const std::string line = chain_span_->summary(); !line.empty())
       log(BackendLogLevel::Info, "profil GPU · " + line);
   }
+} catch (...) {  // NOLINT(bugprone-empty-catch) : le journal du profil est facultatif à la fermeture
 }
 
 std::expected<void, Refusal> TensorRtBackend::bind() const {

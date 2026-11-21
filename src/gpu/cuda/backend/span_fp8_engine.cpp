@@ -196,7 +196,7 @@ std::expected<void, Refusal> trial_step(cudaError_t error, const char* step, std
   return cuda_check(error, std::format("SPAN : essai {} ({})", label, step));
 }
 
-std::expected<void, Refusal> launch_trial(Scratch& scratch, SpanFp8Net& net, std::string_view label) {
+std::expected<void, Refusal> launch_trial(const Scratch& scratch, SpanFp8Net& net, std::string_view label) {
   std::string why;
   if (net.launch_body(scratch.stream, scratch.input, why) &&
       net.launch_tail(scratch.stream, scratch.output, {}, why))
@@ -205,7 +205,7 @@ std::expected<void, Refusal> launch_trial(Scratch& scratch, SpanFp8Net& net, std
   return refuse(RefusalCode::VendorCallFailed, std::format("essai {} : {}", label, why));
 }
 
-std::expected<float, Refusal> measure_trial(Scratch& scratch, SpanFp8Net& net, std::string_view label) {
+std::expected<float, Refusal> measure_trial(const Scratch& scratch, SpanFp8Net& net, std::string_view label) {
   if (auto ok = trial_step(cudaEventRecord(scratch.start, scratch.stream), "début", label); !ok)
     return std::unexpected(std::move(ok.error()));
   if (auto ok = launch_trial(scratch, net, label); !ok) return std::unexpected(std::move(ok.error()));

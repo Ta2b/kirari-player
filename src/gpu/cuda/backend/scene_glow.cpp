@@ -40,7 +40,7 @@ bool SceneGlow::allocate() {
 
 SceneGlow::~SceneGlow() {
   if (anchors_ready_) static_cast<void>(cudaEventSynchronize(anchors_ready_));
-  for (Read& read : reads_) {
+  for (const Read& read : reads_) {
     if (read.done) {
       static_cast<void>(cudaEventSynchronize(read.done));
       static_cast<void>(cudaEventDestroy(read.done));
@@ -49,7 +49,7 @@ SceneGlow::~SceneGlow() {
   }
   if (anchors_ready_) static_cast<void>(cudaEventDestroy(anchors_ready_));
   if (device_) static_cast<void>(cudaFree(device_));
-  for (Source& source : sources_) {
+  for (const Source& source : sources_) {
     if (source.anchors) static_cast<void>(cudaFree(source.anchors));
     if (source.aggregates) static_cast<void>(cudaFree(source.aggregates));
   }
