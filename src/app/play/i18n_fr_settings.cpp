@@ -193,6 +193,11 @@ constexpr std::array kSettingsPages{
           "Écrit les caractéristiques déformées directement dans GridNet sur les NVIDIA RTX 40 "
           "compatibles en 1080p. Décocher rétablit la conversion séparée de leur disposition."},
     Entry{"Native DistilDRBA final block (test)", "Dernier bloc DistilDRBA natif (essai)"},
+    Entry{"Direct CUDA RIFE (test)", "RIFE CUDA direct (essai)"},
+    Entry{"Loads compatible RIFE models directly into CUDA kernels with FP32 accumulation. "
+          "Skips building and comparing TensorRT plans for RIFE.",
+          "Charge directement les modèles RIFE compatibles dans les noyaux CUDA avec des sommes FP32. "
+          "Évite la construction et la comparaison des plans TensorRT pour RIFE."},
     Entry{"Tries the CUDA Winograd final block after a quality and speed check. Turning it off "
           "uses TensorRT for that block.",
           "Essaie le dernier bloc Winograd CUDA après contrôle de la qualité et de la vitesse. "

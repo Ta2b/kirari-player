@@ -27,27 +27,37 @@ namespace {
 // Le seuil de l'essai du RIFE natif contre TensorRT FP16 (docs/rife-natif.md) ; la séance finale vise 50 dB.
 constexpr double kNativeMinDb = 45.0;
 
-// Les couches de l'encodeur et des blocs, lues dans les morceaux ONNX que nomme le manifeste (le même
-// découpage que les moteurs TensorRT, poids de 4.25 lite déjà permutés), vérifiées par leur empreinte.
-std::expected<std::vector<RifeNativePiece>, Refusal> native_pieces(
-    const std::filesystem::path& manifest_path) {
-  std::ifstream file(manifest_path, std::ios::binary);
+std::expected<prepare::RifeFusedManifest, Refusal> read_manifest(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
   const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
   if (!file && !file.eof())
     return refuse(RefusalCode::FileUnreadable,
-                  std::format("RIFE natif : {} illisible", core::to_utf8(manifest_path)));
-  auto manifest = prepare::parse_manifest(text);
-  if (!manifest) return std::unexpected(std::move(manifest.error()));
+                  std::format("RIFE fusionné : {} illisible", core::to_utf8(path)));
+  return prepare::parse_manifest(text);
+}
+
+RifeFusedKey rife_key(const prepare::RifeFusedManifest& manifest) {
+  return {.height = manifest.height,
+          .width = manifest.width,
+          .motion = manifest.output == prepare::RifeFusedOutput::Motion,
+          .warp = manifest.output == prepare::RifeFusedOutput::ImageCubic ? kernels::RifeWarp::CatmullRom
+                                                                          : kernels::RifeWarp::Bilinear,
+          .plan = manifest.plan};
+}
+
+// Les couches de l'encodeur et des blocs, lues dans les morceaux ONNX que nomme le manifeste (le même
+// découpage que les moteurs TensorRT, poids de 4.25 lite déjà permutés), vérifiées par leur empreinte.
+std::expected<std::vector<RifeNativePiece>, Refusal> native_pieces(
+    const std::filesystem::path& manifest_path, const prepare::RifeFusedManifest& manifest) {
   std::vector<RifeNativePiece> pieces;
-  for (std::size_t i = 0; i < manifest->pieces.size(); ++i) {
-    const std::filesystem::path onnx =
-        manifest_path.parent_path() / core::path_from_utf8(manifest->pieces[i]);
-    if (i < manifest->digests.size()) {
+  for (std::size_t i = 0; i < manifest.pieces.size(); ++i) {
+    const std::filesystem::path onnx = manifest_path.parent_path() / core::path_from_utf8(manifest.pieces[i]);
+    if (i < manifest.digests.size()) {
       auto sha = prepare::sha256_file_known(onnx);
       if (!sha) return std::unexpected(std::move(sha.error()));
-      if (*sha != manifest->digests[i])
+      if (*sha != manifest.digests[i])
         return refuse(RefusalCode::ModelUnreadable,
-                      std::format("RIFE natif : {} a changé", manifest->pieces[i]));
+                      std::format("RIFE natif : {} a changé", manifest.pieces[i]));
     }
     auto bytes = prepare::read_onnx_bytes(onnx);
     if (!bytes) return std::unexpected(std::move(bytes.error()));
@@ -140,12 +150,7 @@ std::string verdict_identity(const cudaDeviceProp& device, int driver, const std
 std::expected<Artifact, Refusal> TensorRtBackend::build_rife_fused(const ModelSpec& model,
                                                                    const ShapeSet& shapes,
                                                                    Progress& progress) {
-  std::ifstream file(model.onnx_path, std::ios::binary);
-  const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-  if (!file && !file.eof())
-    return refuse(RefusalCode::FileUnreadable,
-                  std::format("RIFE fusionné : {} illisible", core::to_utf8(model.onnx_path)));
-  auto manifest = prepare::parse_manifest(text);
+  auto manifest = read_manifest(model.onnx_path);
   if (!manifest) return std::unexpected(std::move(manifest.error()));
   const int h = manifest->height;
   const int w = manifest->width;
@@ -155,6 +160,10 @@ std::expected<Artifact, Refusal> TensorRtBackend::build_rife_fused(const ModelSp
         RefusalCode::ShapeInvalid,
         std::format("RIFE fusionné : forme fixe 1×11×{}×{} (celle du manifeste) attendue, demandée {}", h, w,
                     shape_text(shapes)));
+  }
+  if (rife_cuda_direct_) {
+    return Artifact{.cache_key = std::format("{}{}", kRifeCudaArtifact, model.sha256),
+                    .path = model.onnx_path};
   }
   // Un moteur publié doit se désérialiser ici : sinon le constructeur le refait.
   const prepare::EngineCheck check =
@@ -172,13 +181,7 @@ std::expected<Artifact, Refusal> TensorRtBackend::build_rife_fused(const ModelSp
   const prepare::TrtexecBuilder block_builder(std::move(block_config), check);
   const std::filesystem::path folder = model.onnx_path.parent_path();
   const std::size_t count = manifest->pieces.size();
-  RifeFusedKey key{.height = h,
-                   .width = w,
-                   .motion = manifest->output == prepare::RifeFusedOutput::Motion,
-                   .warp = manifest->output == prepare::RifeFusedOutput::ImageCubic
-                               ? kernels::RifeWarp::CatmullRom
-                               : kernels::RifeWarp::Bilinear,
-                   .plan = manifest->plan};
+  RifeFusedKey key = rife_key(*manifest);
   const bool try_body = rife_native_ && supports_lite_encoder_body(properties_, key, model.onnx_path);
   const auto total = count + (try_body ? 1U : 0U);
   for (std::size_t i = 0; i < count; ++i) {
@@ -219,6 +222,20 @@ std::expected<Artifact, Refusal> TensorRtBackend::build_rife_fused(const ModelSp
   return Artifact{.cache_key = rife_fused_artifact_key(key), .path = model.onnx_path};
 }
 
+std::expected<std::unique_ptr<Engine>, Refusal> TensorRtBackend::load_rife_cuda(const Artifact& artifact) {
+  auto manifest = read_manifest(artifact.path);
+  if (!manifest) return std::unexpected(std::move(manifest.error()));
+  auto pieces = native_pieces(artifact.path, *manifest);
+  if (!pieces) return std::unexpected(std::move(pieces.error()));
+  auto engine = RifeFusedEngine::load_native(rife_key(*manifest), *pieces, arena());
+  if (!engine) return std::unexpected(std::move(engine.error()));
+  if (l2_keep_)
+    (*engine)->keep_in_l2(persisting_l2(), static_cast<std::size_t>(properties_.accessPolicyMaxWindowSize));
+  log(BackendLogLevel::Info, std::format("RIFE CUDA direct : {}×{}, {} blocs", manifest->width,
+                                         manifest->height, manifest->plan.blocks));
+  return std::unique_ptr<Engine>(std::move(*engine));
+}
+
 std::expected<std::unique_ptr<Engine>, Refusal> TensorRtBackend::load_rife_fused(const Artifact& artifact) {
   const std::optional<RifeFusedKey> key = rife_fused_artifact_key_parse(artifact.cache_key);
   if (!key) return refuse(RefusalCode::GraphInvalid, "RIFE fusionné : clé d'artefact illisible");
@@ -246,7 +263,9 @@ std::expected<std::unique_ptr<Engine>, Refusal> TensorRtBackend::load_rife_fused
 
 std::expected<void, Refusal> TensorRtBackend::settle_rife_native(RifeFusedEngine& engine,
                                                                  const Artifact& artifact) {
-  auto pieces = native_pieces(artifact.path);
+  auto manifest = read_manifest(artifact.path);
+  if (!manifest) return std::unexpected(std::move(manifest.error()));
+  auto pieces = native_pieces(artifact.path, *manifest);
   if (!pieces) return std::unexpected(std::move(pieces.error()));
   const auto finish = [&]() -> std::expected<void, Refusal> {
     if (!engine.can_try_hybrid_encoder()) return {};

@@ -159,6 +159,7 @@ std::expected<std::unique_ptr<TensorRtBackend>, Refusal> TensorRtBackend::create
   backend->warp_l2_ = (init.trials & kTrialWarpL2) != 0;
   backend->span_native_ = (init.trials & kTrialSpanNative) != 0;
   backend->rife_native_ = (init.trials & kTrialRifeNative) != 0;
+  backend->rife_cuda_direct_ = (init.trials & kRifeCudaDirect) != 0;
   backend->gmfss_native_ = (init.trials & kTrialGmfssNative) != 0;
   backend->gmfss_feature_reuse_ = (init.trials & kTrialGmfssFeatureReuse) != 0;
   backend->gmflow_fast_ = (init.trials & kTrialGmflowFast) != 0;
@@ -420,6 +421,7 @@ std::expected<Artifact, Refusal> TensorRtBackend::build(const ModelSpec& model, 
 std::expected<std::unique_ptr<Engine>, Refusal> TensorRtBackend::load(const Artifact& artifact) {
   if (auto ok = bind(); !ok) return std::unexpected(ok.error());
   if (span_fp8_artifact_shape(artifact.cache_key)) return load_span_fp8(artifact);
+  if (artifact.cache_key.starts_with(kRifeCudaArtifact)) return load_rife_cuda(artifact);
   if (rife_fused_artifact_key_parse(artifact.cache_key)) return load_rife_fused(artifact);
   if (drba_fused_artifact_key_parse(artifact.cache_key)) return load_drba_fused(artifact);
   if (tfix_fused_artifact_key_parse(artifact.cache_key)) return load_tfix_fused(artifact);

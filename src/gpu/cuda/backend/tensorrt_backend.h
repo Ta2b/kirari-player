@@ -245,6 +245,8 @@ class TensorRtBackend final : public Backend, public KernelOps {
   std::expected<Artifact, Refusal> build_rife_fused(const ModelSpec& model, const ShapeSet& shapes,
                                                     Progress& progress);
   std::expected<std::unique_ptr<Engine>, Refusal> load_rife_fused(const Artifact& artifact);
+  std::expected<std::unique_ptr<Engine>, Refusal> load_rife_cuda(const Artifact& artifact);
+  static constexpr std::string_view kRifeCudaArtifact = "rife-cuda:";
   // Le RIFE natif sur la chaîne chargée : le verdict gardé de cette identité s'il tient encore, sinon l'essai
   // complet, dont le verdict est gardé (rife_native_verdict.h).
   std::expected<void, Refusal> settle_rife_native(RifeFusedEngine& engine, const Artifact& artifact);
@@ -414,8 +416,9 @@ class TensorRtBackend final : public Backend, public KernelOps {
   bool l2_keep_ = false;
   bool span_native_ = false;             // bords du SPAN FP8 par les noyaux du FP16 natif (kTrialSpanNative)
   bool span_fp8_native_blocks_ = false;  // convolutions avec ReLU du SPAN FP8 (kTrialSpanFp8NativeBlocks)
-  bool rife_hwc8_ = false;     // blocs du RIFE fusionné en E/S HWC8 (kTrialRifeHwc8, allumé par le lecteur)
-  bool rife_native_ = false;   // encodeur et blocs du RIFE fusionné par les noyaux natifs (kTrialRifeNative)
+  bool rife_hwc8_ = false;    // blocs du RIFE fusionné en E/S HWC8 (kTrialRifeHwc8, allumé par le lecteur)
+  bool rife_native_ = false;  // encodeur et blocs du RIFE fusionné par les noyaux natifs (kTrialRifeNative)
+  bool rife_cuda_direct_ = false;
   bool gmfss_native_ = false;  // GridNet de la fusion de GMFSS par les noyaux natifs (kTrialGmfssNative)
   bool gmfss_feature_reuse_ = false;
   bool gmflow_fast_ = false;

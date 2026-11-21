@@ -46,8 +46,8 @@ struct Entry {
 
 class Net final : public RifeNativeNet {
  public:
-  Net(RifeNativePrecision precision, cudaStream_t loading, bool encoder = true)
-      : precision_(precision), loading_(loading), first_block_(encoder ? 1 : 0) {
+  Net(RifeNativePrecision precision, cudaStream_t loading, bool encoder = true, bool autotune = true)
+      : precision_(precision), loading_(loading), autotune_(autotune), first_block_(encoder ? 1 : 0) {
     int device = 0;
     if (cudaGetDevice(&device) == cudaSuccess) {
       static_cast<void>(cudaDeviceGetAttribute(&sms_, cudaDevAttrMultiProcessorCount, device));
@@ -329,6 +329,14 @@ class Net final : public RifeNativeNet {
   // plus simple), chacune avec ses poids rangés pour sa tuile.
   bool tune(const Tuning& at, const RifeNativeConv& conv, const rn::Dense& dense, Layer& layer,
             std::string& error) const {
+    const Config reference{.kc = 16, .ct = 16, .rows = rn::stride_of(layer.kind) == 2 ? 1 : 2, .ksplit = 1};
+    if (!autotune_) {
+      if (!shape(layer, reference)) {
+        error = "pas de forme de référence";
+        return false;
+      }
+      return upload_weights(layer.w, dense, reference.ct, error);
+    }
     const auto known = std::ranges::find_if(at.tuned, [&](const RifeNativeTuned& t) {
       return t.piece == at.piece && t.layer == at.layer && t.sums == layer.sums;
     });
@@ -347,7 +355,6 @@ class Net final : public RifeNativeNet {
       if (pack.as<void>() == nullptr && !upload_weights(pack, dense, ct, error)) return nullptr;
       return pack.as<void>();
     };
-    const Config reference{.kc = 16, .ct = 16, .rows = rn::stride_of(layer.kind) == 2 ? 1 : 2, .ksplit = 1};
     if (!shape(layer, reference)) {
       error = "pas de forme de référence";
       return false;
@@ -452,6 +459,7 @@ class Net final : public RifeNativeNet {
 
   RifeNativePrecision precision_;
   cudaStream_t loading_;  // la voie du chargement : envois et banc
+  bool autotune_;
   int first_block_ = 1;
   int sms_ = 1;
   bool ada_ = false;
@@ -533,8 +541,8 @@ std::unique_ptr<RifeNativeNet> RifeNativeNet::create_encode_tail(const RifeNativ
 std::unique_ptr<RifeNativeNet> RifeNativeNet::create(const std::vector<RifeNativePiece>& pieces,
                                                      const std::vector<int>& reduce, int height, int width,
                                                      RifeNativePrecision precision, cudaStream_t stream,
-                                                     std::vector<RifeNativeTuned>& tuned,
-                                                     std::string& error) {
+                                                     std::vector<RifeNativeTuned>& tuned, std::string& error,
+                                                     bool autotune) {
   if (pieces.size() != reduce.size() + 1 || pieces.empty()) {
     error = "un encodeur et un morceau par bloc attendus";
     return nullptr;
@@ -544,7 +552,7 @@ std::unique_ptr<RifeNativeNet> RifeNativeNet::create(const std::vector<RifeNativ
     error = "événements CUDA du réglage";
     return nullptr;
   }
-  auto net = std::make_unique<Net>(precision, stream);
+  auto net = std::make_unique<Net>(precision, stream, true, autotune);
   const Entry image{.ih = height,
                     .iw = width,
                     .in_ld = 0,

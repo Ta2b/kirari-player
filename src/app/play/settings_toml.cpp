@@ -311,6 +311,7 @@ void read_experimental(const toml::table& root, ExperimentalSettings& t,
   if (section_table == nullptr) return;
   const auto& table = *section_table;
   reads.push_back(read(table, "experimental", "sharp1_winograd", t.sharp1_winograd));
+  reads.push_back(read(table, "experimental", "rife_cuda_direct", t.rife_cuda_direct));
   reads.push_back(read(table, "experimental", "drba_native_tail", t.drba_native_tail));
   reads.push_back(read(table, "experimental", "gmfss_folded_tail", t.gmfss_folded_tail));
   reads.push_back(read(table, "experimental", "gmflow_fast", t.gmflow_fast));

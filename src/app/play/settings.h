@@ -209,6 +209,7 @@ inline constexpr std::int64_t kSettingsRetryUs = 10'000'000;
 
 struct ExperimentalSettings {
   bool sharp1_winograd = true;
+  bool rife_cuda_direct = false;
   bool drba_native_tail = true;
   bool gmfss_folded_tail = true;
   bool gmflow_fast = false;

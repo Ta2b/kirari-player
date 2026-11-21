@@ -92,6 +92,8 @@ struct RifeLoad {
   std::expected<bool, StageFailure> motion_variant();
   // RIFE image, fusionné sinon entier, quand la variante mouvement ne tourne pas.
   std::expected<bool, StageFailure> image();
+  std::expected<bool, StageFailure> cuda_direct();
+  std::expected<bool, StageFailure> selected(bool use_rife);
 };
 
 Fused RifeLoad::try_fused(const kernels::RifeGeometry& g, bool motion, std::unique_ptr<gpu::Engine>& into) {
@@ -176,12 +178,53 @@ std::expected<bool, StageFailure> RifeLoad::image() {
   return true;
 }
 
+std::expected<bool, StageFailure> RifeLoad::cuda_direct() {
+  const bool motion = !p.options.rife_image;
+  const auto output = rife_fused_output(motion, settings.cubic_warp);
+  const auto& g = motion ? c.geometry : c.image_geometry;
+  auto loaded = prepare_rife_fused(p, init, *c.backend, rife_model, models_dir, g, output);
+  if (!loaded) return stage_refused(std::move(loaded.error()), ChainStage::Motion);
+  if (!*loaded) return false;
+  (motion ? c.rife_motion : c.rife) = std::move(**loaded);
+  c.rife_fused = true;
+  return true;
+}
+
+std::expected<bool, StageFailure> RifeLoad::selected(bool use_rife) {
+  const auto log = log_channel("app");
+  if (use_rife && settings.experimental.rife_cuda_direct && c.backend->capabilities().name == "tensorrt")
+    return cuda_direct();
+  // Le fusionné quand rife_fused_choice.h le veut et que le modèle se coupe ; tout échec garde le RIFE
+  // entier.
+  const std::string fused_declined = use_rife
+                                         ? rife_fused_declined(settings, c.backend->capabilities().rife_fused,
+                                                               c.rife_planes, model_tier(c.rife_model))
+                                         : i18n::tr("no RIFE");
+  fused_wanted = fused_declined.empty();
+  if (use_rife && settings.rife_fused && !fused_wanted)
+    log->info("RIFE fusionné non utilisé : {}", fused_declined);
+  if (use_rife && !p.options.rife_image) {
+    auto motion = motion_variant();
+    if (!motion || !*motion) return motion;
+  }
+  if (!load_calm_rife(p, init, c, inner, library, models_dir)) return false;
+  if (!load_half_rife(p, init, c, settings, inner, library, models_dir)) return false;
+  if (use_rife && !c.rife_motion) {
+    auto loaded = image();
+    if (!loaded || !*loaded) return loaded;
+  }
+  if (c.rife_motion) {
+    log->info("RIFE mouvement : estimé en {}x{}, warp en {}x{}", c.rife_size.width, c.rife_size.height,
+              c.work.width, c.work.height);
+  }
+  return true;
+}
+
 }  // namespace
 
 std::expected<bool, StageFailure> load_rife(Player& p, const gpu::BackendInit& init, ChainEngines& c,
                                             const PlaySettings& settings, InnerFallbacks& inner,
                                             const std::string& library) {
-  const auto log = log_channel("app");
   const bool use_rife = settings.rife_factor >= 2 && c.rife_model && !c.use_drba() && !c.use_apple() &&
                         c.gmfss_use != GmfssUse::Only;
   c.rife_align = use_rife ? rife_padding_multiple(*c.rife_model) : kernels::kRifeAlign;
@@ -200,30 +243,7 @@ std::expected<bool, StageFailure> load_rife(Player& p, const gpu::BackendInit& i
                 .library = library,
                 .models_dir = paths::derived_models(p.paths),
                 .rife_model = c.rife_model.value_or(std::filesystem::path())};
-  // Le fusionné quand rife_fused_choice.h le veut et que le modèle se coupe ; tout échec garde le RIFE
-  // entier.
-  const std::string fused_declined = use_rife
-                                         ? rife_fused_declined(settings, c.backend->capabilities().rife_fused,
-                                                               c.rife_planes, model_tier(c.rife_model))
-                                         : i18n::tr("no RIFE");
-  load.fused_wanted = fused_declined.empty();
-  if (use_rife && settings.rife_fused && !load.fused_wanted)
-    log->info("RIFE fusionné non utilisé : {}", fused_declined);
-  if (use_rife && !p.options.rife_image) {
-    auto motion = load.motion_variant();
-    if (!motion || !*motion) return motion;
-  }
-  if (!load_calm_rife(p, init, c, inner, library, load.models_dir)) return false;
-  if (!load_half_rife(p, init, c, settings, inner, library, load.models_dir)) return false;
-  if (use_rife && !c.rife_motion) {
-    auto image = load.image();
-    if (!image || !*image) return image;
-  }
-  if (c.rife_motion) {
-    log->info("RIFE mouvement : estimé en {}x{}, warp en {}x{}", c.rife_size.width, c.rife_size.height,
-              c.work.width, c.work.height);
-  }
-  return true;
+  return load.selected(use_rife);
 }
 
 }  // namespace kirari::app::play

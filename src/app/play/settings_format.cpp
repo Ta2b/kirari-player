@@ -32,6 +32,7 @@ toml::table image_table(const PlaySettings& s) {
 
 toml::table experimental_table(const ExperimentalSettings& s) {
   return toml::table{{"sharp1_winograd", s.sharp1_winograd},
+                     {"rife_cuda_direct", s.rife_cuda_direct},
                      {"drba_native_tail", s.drba_native_tail},
                      {"gmfss_folded_tail", s.gmfss_folded_tail},
                      {"gmflow_fast", s.gmflow_fast},

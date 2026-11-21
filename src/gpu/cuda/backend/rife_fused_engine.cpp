@@ -31,14 +31,7 @@ RifeFusedEngine::~RifeFusedEngine() {
   if (zone_) zone_->drop_region(this);  // sa région ne repousse plus celles des autres moteurs fusionnés
 }
 
-std::expected<std::unique_ptr<RifeFusedEngine>, Refusal> RifeFusedEngine::load(
-    nvinfer1::IRuntime& runtime, const std::filesystem::path& cache_dir, const RifeFusedKey& key,
-    const std::shared_ptr<SharedActivations>& shared) {
-  if (!shared) return refuse(RefusalCode::GraphInvalid, "RIFE fusionné : zone d'activation absente");
-  if (!kernels::rife_fused_size_valid(key.plan, key.height, key.width) ||
-      key.engines.size() != static_cast<std::size_t>(key.plan.blocks) + 1)
-    return refuse(RefusalCode::GraphInvalid,
-                  "RIFE fusionné : découpage ou taille que les noyaux ne prennent pas");
+std::unique_ptr<RifeFusedEngine> RifeFusedEngine::for_key(const RifeFusedKey& key) {
   std::unique_ptr<RifeFusedEngine> engine(new RifeFusedEngine());
   engine->plan_ = key.plan;
   engine->height_ = key.height;
@@ -48,6 +41,32 @@ std::expected<std::unique_ptr<RifeFusedEngine>, Refusal> RifeFusedEngine::load(
   engine->outputs_ =
       key.motion ? std::vector<std::string>{"flow", "mask"} : std::vector<std::string>{"output"};
   engine->window_ = kernels::Window{.x = 0, .y = 0, .width = key.width, .height = key.height};
+  // Les blocs grossiers, repris à chaud (next_warm) : ceux à la réduction du premier, sauf le dernier.
+  while (engine->warm_blocks_ + 1 < key.plan.blocks &&
+         key.plan.reduce[static_cast<std::size_t>(engine->warm_blocks_)] == key.plan.reduce[0]) {
+    ++engine->warm_blocks_;
+  }
+  return engine;
+}
+
+std::expected<void, Refusal> RifeFusedEngine::finish_loading(const std::shared_ptr<SharedActivations>& shared,
+                                                             std::int64_t activation) {
+  layout_ = kernels::rife_fused_layout(plan_, height_, width_, hwc8_);
+  own_activation_ = activation;
+  scratch_offset_ = scratch_offset_for(*shared);
+  if (auto ok = use_zone(shared); !ok) return ok;
+  return check_loaded(shared);
+}
+
+std::expected<std::unique_ptr<RifeFusedEngine>, Refusal> RifeFusedEngine::load(
+    nvinfer1::IRuntime& runtime, const std::filesystem::path& cache_dir, const RifeFusedKey& key,
+    const std::shared_ptr<SharedActivations>& shared) {
+  if (!shared) return refuse(RefusalCode::GraphInvalid, "RIFE fusionné : zone d'activation absente");
+  if (!kernels::rife_fused_size_valid(key.plan, key.height, key.width) ||
+      key.engines.size() != static_cast<std::size_t>(key.plan.blocks) + 1)
+    return refuse(RefusalCode::GraphInvalid,
+                  "RIFE fusionné : découpage ou taille que les noyaux ne prennent pas");
+  auto engine = for_key(key);
   const int h = key.height;
   const int w = key.width;
   std::int64_t activation = 0;
@@ -72,16 +91,36 @@ std::expected<std::unique_ptr<RifeFusedEngine>, Refusal> RifeFusedEngine::load(
         (*body)->activation_bytes() <= activation)
       engine->encode_body_ = std::move(*body);
   }
-  // Les blocs grossiers, repris à chaud (next_warm) : ceux à la réduction du premier, sauf le dernier.
-  while (engine->warm_blocks_ + 1 < key.plan.blocks &&
-         key.plan.reduce[static_cast<std::size_t>(engine->warm_blocks_)] == key.plan.reduce[0]) {
-    ++engine->warm_blocks_;
-  }
-  engine->layout_ = kernels::rife_fused_layout(key.plan, h, w, engine->hwc8_);
-  engine->own_activation_ = activation;
-  engine->scratch_offset_ = engine->scratch_offset_for(*shared);
-  if (auto ok = engine->use_zone(shared); !ok) return std::unexpected(std::move(ok.error()));
-  if (auto ok = engine->check_loaded(shared); !ok) return std::unexpected(std::move(ok.error()));
+  if (auto ok = engine->finish_loading(shared, activation); !ok)
+    return std::unexpected(std::move(ok.error()));
+  return engine;
+}
+
+std::expected<std::unique_ptr<RifeFusedEngine>, Refusal> RifeFusedEngine::load_native(
+    const RifeFusedKey& key, const std::vector<RifeNativePiece>& pieces,
+    const std::shared_ptr<SharedActivations>& shared) {
+  if (!shared) return refuse(RefusalCode::GraphInvalid, "RIFE CUDA : zone d'activation absente");
+  if (!kernels::rife_fused_size_valid(key.plan, key.height, key.width))
+    return refuse(RefusalCode::ShapeInvalid, "RIFE CUDA : découpage ou taille hors des noyaux");
+  FusedScratch scratch;
+  if (auto ok = cuda_check(cudaStreamCreateWithFlags(&scratch.stream, cudaStreamNonBlocking),
+                           "RIFE CUDA : flux de chargement");
+      !ok)
+    return std::unexpected(std::move(ok.error()));
+
+  const std::vector<int> reduce(key.plan.reduce.begin(), key.plan.reduce.begin() + key.plan.blocks);
+  constexpr RifeNativePrecision precision{RifeNativeSums::kF32, RifeNativeSums::kF32};
+  std::vector<RifeNativeTuned> tuned;
+  std::string error;
+  auto net = RifeNativeNet::create(pieces, reduce, key.height, key.width, precision, scratch.stream, tuned,
+                                   error, false);
+  if (!net) return refuse(RefusalCode::FormatUnsupported, "RIFE CUDA : " + error);
+  auto engine = for_key(key);
+  engine->hwc8_ = true;
+  engine->natives_.push_back(std::move(net));
+  engine->set_route(std::vector<int>(pieces.size(), 0));
+  if (auto ok = engine->finish_loading(shared, engine->native_workspace_); !ok)
+    return std::unexpected(std::move(ok.error()));
   return engine;
 }
 

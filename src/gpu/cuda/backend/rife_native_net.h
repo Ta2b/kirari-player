@@ -63,7 +63,8 @@ class RifeNativeNet {
   static std::unique_ptr<RifeNativeNet> create(const std::vector<RifeNativePiece>& pieces,
                                                const std::vector<int>& reduce, int height, int width,
                                                RifeNativePrecision precision, cudaStream_t stream,
-                                               std::vector<RifeNativeTuned>& tuned, std::string& error);
+                                               std::vector<RifeNativeTuned>& tuned, std::string& error,
+                                               bool autotune = true);
   // La transposée de l'encodeur Lite, depuis les seize canaux par pixel du préfixe TensorRT.
   static std::unique_ptr<RifeNativeNet> create_encode_tail(const RifeNativeConv& tail, int height, int width,
                                                            cudaStream_t stream, std::string& error);

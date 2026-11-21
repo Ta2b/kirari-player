@@ -560,6 +560,7 @@ gpu::BackendInit chain_backend_init(Player& p, const PlaySettings& settings, int
                     (p.options.span_native_edges ? gpu::kTrialSpanNative : 0U) |
                     (trials.span_fp8_native_blocks ? gpu::kTrialSpanFp8NativeBlocks : 0U) |
                     (p.options.rife_native ? gpu::kTrialRifeNative : 0U) |
+                    (trials.rife_cuda_direct ? gpu::kRifeCudaDirect : 0U) |
                     (p.options.gmfss_native ? gpu::kTrialGmfssNative : 0U) |
                     (p.options.gmfss_feature_reuse ? gpu::kTrialGmfssFeatureReuse : 0U) |
                     (trials.gmflow_fast ? gpu::kTrialGmflowFast : 0U) |

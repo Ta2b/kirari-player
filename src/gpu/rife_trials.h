@@ -6,5 +6,6 @@ namespace kirari::gpu {
 
 // Range les sources du warp cubique 4K par pixel sur les RTX 40 compatibles.
 inline constexpr std::uint32_t kTrialPackedWarp = 1U << 18U;
+inline constexpr std::uint32_t kRifeCudaDirect = 1U << 19U;
 
 }  // namespace kirari::gpu

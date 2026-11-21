@@ -319,6 +319,25 @@ de la même ligne est celui de SPAN). Le journal (`kirari.log`, `docs/support.md
 garde la chaîne », ou un verdict dont toutes les options sont à 0, veut dire TensorRT. Aucune option ne force le
 natif par-dessus l'essai.
 
+### RIFE CUDA direct
+
+Sur NVIDIA avec le backend TensorRT sélectionné, **Vidéo > Interpolation >
+Avancé > Essais > RIFE CUDA direct** charge tous les blocs et l'encodeur RIFE
+dans les noyaux CUDA. Le lecteur lit les poids des morceaux ONNX. Il ne
+construit ni ne charge de plans TensorRT pour RIFE et ne lance ni réglage
+chronométré ni comparaison avec TensorRT. Le chargement alloue les tampons,
+envoie les poids et vérifie l'exécution de la chaîne CUDA. Si le modèle ou
+la forme sont refusés, ce choix ne charge pas un moteur TensorRT à leur place.
+Le réglage est décoché par défaut et s'applique au rechargement de la vidéo.
+Le backend NVIDIA reste chargé pour la chaîne vidéo et les autres modèles.
+
+Sur la RTX 4070 Ti en 1080p, avec des profils et caches vides, le chargement
+du moteur direct a pris environ 0,15–0,17 s après la préparation du manifeste.
+RIFE 4.25 et 4.22 Lite en sortie mouvement prennent 3,77 et 3,89 ms de
+médiane GPU avec les sommes FP32 et les formes fixes actuelles. Le lecteur
+confirme 165,00 images nouvelles/s sur le segment central en fenêtre
+Wayland, sans agrandissement. La sortie image de 4.25 a aussi été vérifiée.
+
 L'essai complet :
 
 1. **quatre réseaux natifs**, du plus rapide au plus juste : sommes f16 ; f16 et tête f32 ; mixtes et tête f32 ;

@@ -48,6 +48,9 @@ class RifeFusedEngine final : public Engine {
   static std::expected<std::unique_ptr<RifeFusedEngine>, Refusal> load(
       nvinfer1::IRuntime& runtime, const std::filesystem::path& cache_dir, const RifeFusedKey& key,
       const std::shared_ptr<SharedActivations>& shared);
+  static std::expected<std::unique_ptr<RifeFusedEngine>, Refusal> load_native(
+      const RifeFusedKey& key, const std::vector<RifeNativePiece>& pieces,
+      const std::shared_ptr<SharedActivations>& shared);
   ~RifeFusedEngine() override;
   RifeFusedEngine(const RifeFusedEngine&) = delete;
   RifeFusedEngine& operator=(const RifeFusedEngine&) = delete;
@@ -139,6 +142,9 @@ class RifeFusedEngine final : public Engine {
 
  private:
   RifeFusedEngine() = default;
+  static std::unique_ptr<RifeFusedEngine> for_key(const RifeFusedKey& key);
+  std::expected<void, Refusal> finish_loading(const std::shared_ptr<SharedActivations>& shared,
+                                              std::int64_t activation);
   std::expected<void, Refusal> check_loaded(const std::shared_ptr<SharedActivations>& shared);
   // Ce que l'encodeur fait à cet appel : les deux images, B seule (l'encodage de B d'avant devient celui de A
   // en changeant d'emplacement), rien (l'encodage de l'appel précédent sert tel quel).
