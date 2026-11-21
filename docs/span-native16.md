@@ -489,6 +489,18 @@ garde également les mêmes codes. Les minima du réseau Balanced passent de 7,9
 à 9,88–9,92 ms. Cette forme ajoute des barrières, et la taille du tampon la limite à
 deux blocs résidents par SM.
 
+Trois essais réduisent les transformées d'entrée répétées du Winograd C64.
+Les formes circulaires conservent tous les codes, y compris sur les tuiles
+de bord et avec masque. La résidence à trois blocs par SM reste identique.
+La variante circulaire ajoute environ 3–4 % sur la ReLU et 4–6 % sur la
+porte dans le banc à bandes de 128 lignes. Prétransformer seulement les
+deux lignes extérieures conserve aussi tous les codes. Son temps reste
+proche du témoin dans les deux tailles de bande, avec un léger gain sur
+la porte et aucun gain stable sur la ReLU. Prétransformer V0 pour tous les
+warps donne aussi les mêmes bits, avec quelques microsecondes gagnées au
+mieux sur la ReLU. La porte varie dans les deux sens. Ces formes restent
+au banc.
+
 Deux autres variantes C64 ont été comparées à 1080p sur Ada. Les écritures ReLU par
 groupes de quatre canaux suppriment deux synchronisations et donnent un gain dense
 irrégulier. Faire traiter deux paires de lignes par warp divise les chargements de poids

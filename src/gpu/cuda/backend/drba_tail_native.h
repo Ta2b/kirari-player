@@ -20,8 +20,10 @@ class DrbaTailNative {
   static constexpr int kOutputPitch = 24;
 
   // reuse désigne les mêmes images, comme D6. Avec la colle chaude, seul le cache d'entrée est relu.
+  // Si planar est fourni, les 56 premiers canaux de X2 sont lus dans ces plans.
   virtual cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse,
-                              const DrbaGlueParams* hot_glue = nullptr, bool compact_tile = false) const = 0;
+                              const DrbaGlueParams* hot_glue = nullptr, bool compact_tile = false,
+                              const void* planar = nullptr) const = 0;
 };
 
 }  // namespace kirari::gpu::cuda

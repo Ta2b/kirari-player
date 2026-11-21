@@ -273,6 +273,24 @@ gagne 14,02, 10,61 et 14,13 µs face au calcul complet. Elle nécessiterait
 de rétablir l'ordre du lot avant la corrélation globale. Le temps de la paire
 entière reste trop variable pour attribuer un gain au lecteur.
 
+En lecture sur la source 1080p à 48 i/s, GMFSS ×2 avec la voie optique CUDA
+rapide et les projections directes garde une cadence centrale Wayland de
+36,533 et 37,011 i/s au témoin, puis 37,011 et 33,526 i/s avec le réemploi.
+Les quatre p95 entre images nouvelles restent à 42,43 ms. Côté CUDA, les
+médianes de la paire avec reprise de A passent de 10,362–10,516 à
+9,955–10,444 ms. La fusion GridNet, identique dans les deux variantes,
+varie elle aussi de 16,389 à 18,410 ms. Les réglages de précision de MetricNet
+et de la queue GridNet ainsi que la géométrie de l'anneau varient au
+chargement. Le réemploi d'auto-attention reste au banc.
+
+Sur les convolutions d'agrandissement convexe, deux cases partagées
+avec permutation XOR ramènent les barrières de 19 à 11 par bloc. Les
+mêmes fragments MMA FP32 donnent les mêmes codes FP16 sur deux entrées
+réelles de 120×72 et une forme de 47×29. La meilleure résidence passe
+de trois à quatre blocs par SM sur Ada. Les médianes candidates restent
+entre 167 et 179 µs pour des témoins appariés entre 165 et 175 µs.
+Le lecteur garde le chargement actuel.
+
 ### Projections directes dans GridNet
 
 L'option « Projections GMFSS directes (essai) » dans Interpolation > Avancé, ou

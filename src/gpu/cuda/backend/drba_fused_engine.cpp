@@ -264,7 +264,8 @@ std::expected<void, Refusal> DrbaFusedEngine::run(cudaStream_t stream,
                              "drba_post<<<>>>");
         !ok)
       return ok;
-    if (packed_tail_) {
+    // Le dernier bloc natif lit directement les plans fixes à la sortie de l'encodeur.
+    if (packed_tail_ && !tail_) {
       if (auto ok = cuda_check(
               launch_drba_pack_x2(at_ptr(layout_.x[kLastBlock]), at_ptr(packed_x_), h / t, w / t, stream),
               "drba_pack_x2<<<>>>");
@@ -306,9 +307,10 @@ std::expected<void, Refusal> DrbaFusedEngine::run_blocks(cudaStream_t stream,
   for (int b = 0; b < kernels::kDrbaFusedBlocks; ++b) {
     const auto i = static_cast<std::size_t>(b);
     if (tail_ && b == kLastBlock) {
-      if (auto ok = cuda_check(tail_->enqueue(stream, at_ptr(packed_x_), at_ptr(layout_.y[i]), times_only,
-                                              hot.y == nullptr ? nullptr : &hot, hot_xor_),
-                               "DistilDRBA : bloc 2 natif");
+      if (auto ok =
+              cuda_check(tail_->enqueue(stream, at_ptr(packed_x_), at_ptr(layout_.y[i]), times_only,
+                                        hot.y == nullptr ? nullptr : &hot, hot_xor_, at_ptr(layout_.x[i])),
+                         "DistilDRBA : bloc 2 natif");
           !ok)
         return ok;
       break;

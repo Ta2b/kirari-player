@@ -202,6 +202,23 @@ avec des médianes de 2,112–2,142 et 2,109–2,124 ms. Pour 4.22 Lite, les mé
 mais les deux essais du lecteur avec C32 et C64 ensemble ralentissaient Lite de 0,032 et
 0,037 ms en médiane. Le C64 garde donc sa forme précédente.
 
+Un rangement partagé compact du C32 supprime les huit canaux de bourrage
+et teste aussi huit lignes de sortie au lieu de quatre. Huit couches et
+leurs sorties FP16 restent exactes, sur les activations réelles des deux
+modèles et sur les bords. Sans charge mémoire ajoutée, le témoin donne
+180,5–184,6 µs pour les huit couches, le compact 208,8–211,7 µs. Avec
+16 Mio de lecture entre passages, les médianes restent en faveur du
+témoin, 262,6–265,7 µs contre 282,0–287,8 µs. Le compact reste au banc.
+
+Trois écritures directes du résiduel C32 retirent les deux barrières
+d'épilogue. Elles conservent tous les codes mais la médiane reste vers
+184–187 µs à chaque modèle. Sous charge mémoire, le meilleur choix change
+selon le modèle et le passage. Une autre variante calcule deux lignes par
+warp et partage un tiers des lectures de fragments A. À ordre MMA
+et sortie identiques, elle ramène la résidence de cinq à trois blocs par SM
+et coûte de 235 à 245 µs sans la charge ajoutée. Le lecteur conserve
+la tuile 32×4.
+
 Un autre ABBA combine RIFE 4.25 ×8 et SPAN Balanced 1080p vers 4K avec et sans
 `--warp-l2`. Wayland confirme environ 1 188 images neuves à 165,00 i/s à chaque
 passage. La médiane de la plage warp et mélange reste à 1,36 ms et son p95 passe de

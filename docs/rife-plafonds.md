@@ -204,4 +204,6 @@ et 2 588,52 Mo au L2. Sa borne de trafic est de 0,942 ms et sa durée profilée 
 - DistilDRBA applique déjà Winograd vertical sur huit résidus de la queue. Passer de cette queue verticale
   et de blocs grossiers directs à Winograd 2D sur tous les 3×3 éligibles ne retire que 0,041 à 0,044 ms de
   calcul Tensor au pic FP16. La préparation de `X_2` est déjà fusionnée à chaud sur Ada, avec réemploi
-  de ses sommes intermédiaires. À froid, le transfert de `X_2` reste entier. [Voie actuelle](drba-fusionne.md).
+  de ses sommes intermédiaires. À froid, la première convolution du dernier bloc natif lit directement
+  56 plans de `X_2` et supprime 29,25 Mo de transfert logique de rangement. Il reste à mesurer les
+  octets DDR et L2 du graphe à froid après ce changement. [Voie actuelle](drba-fusionne.md).

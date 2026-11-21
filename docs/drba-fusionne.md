@@ -107,6 +107,35 @@ tient dans six noyaux.
   0,867–0,874 ms et les médianes se recouvrent. Le moteur et le warp 4K sont deux
   mesures distinctes. Dans la fenêtre Wayland centrale, 691 à 693 images nouvelles
   sont confirmées par passage, à 165,00 i/s, sans retour manquant.
+- Un rangement des plans fixes de X2 charge les pixels par paires de 32 bits
+  avant d'écrire chaque groupe de huit canaux. Les deux scènes donnent les
+  mêmes 14 622 720 codes, sentinelles comprises. Au microbanc, il abaisse le
+  temps d'environ 30–38 à 21–27 µs. Avec SPAN Performance FP16, les passages
+  Wayland à ×8 confirment chacun 693 images nouvelles à 165,000 i/s. Le p95
+  moteur reste autour de 0,88 ms. Dans quatre traces CUDA à ×2, les médianes
+  du noyau de rangement passent de 71,4–72,2 à 71,0–71,1 µs. Ses p95
+  augmentent de 85,7–92,0 à 139,4–146,6 µs. La variante reste au banc.
+- La première convolution du dernier bloc natif charge directement 56 plans de
+  X2 par paires de pixels. La tranche qui chevauche ces plans lit ses huit
+  autres canaux dans la sortie habituelle de la colle. Cette voie supprime
+  la copie de rangement, soit 29,25 Mo de lectures et d'écritures logiques à
+  froid. Le bloc TensorRT conserve ce rangement. Sur quatre activations
+  réelles, les 1 566 720 codes FP16 et les 6 684 672 octets de cache FP32
+  sont identiques par activation. Au microbanc, copie et convolution
+  passent de 154–171 à 133–140 µs. En fenêtre avec SPAN Performance FP16,
+  le p95 du moteur passe de 1,412–1,450 à 1,274–1,280 ms à ×2, puis de
+  0,867–0,869 à 0,797–0,798 ms à ×8. Wayland confirme 47,93–48,00 i/s à ×2
+  et 165,00 i/s à ×8, avec ou sans lecture directe. Le module de production
+  donne 1,342 et 0,795 ms au p95. La trace du lecteur confirme que le
+  lancement de rangement disparaît pour le bloc natif et revient avec le
+  repli sur TensorRT.
+- Dans le bloc 0 natif, un préchargement calcule les quatre transformées
+  verticales de Winograd dans les registres avant de publier la tuile.
+  Les mêmes opérandes arrivent aux MMA. Les huit états de 97 920 codes
+  gardent tous leurs bits sur quatre activations réelles. Avec 64 canaux
+  de sortie par bloc CUDA, les durées des huit résidus passent de
+  96,9–105,9 à 101,4–107,6 µs. Les deux variantes à 32 canaux restent
+  plus lentes. Le bloc 0 du lecteur garde TensorRT.
 - En lecture Wayland 1080p, une capture Nsight Systems à ×2 mesure 70 relectures du même graphe de
   51 nœuds, à 1,029 ms de médiane. La somme des durées des noyaux atteint 1,028 ms, avec 1,3 µs d'écart
   médian entre la durée du graphe et celle de ses noyaux. La colle d'entrée (0,158 ms) et le rangement

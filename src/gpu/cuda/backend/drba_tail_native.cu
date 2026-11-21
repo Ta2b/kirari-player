@@ -19,16 +19,55 @@ constexpr int kPackedInput = 112;
 constexpr int kMidChannels = 48;
 constexpr int kFlowAndMask = 20;
 constexpr int kFixedChannels = 48;
+constexpr int kPlanarChannels = 56;
 constexpr std::size_t kMiddleBytes = 4U * kWidth * kHeight * kMidChannels * sizeof(__half);
 constexpr std::size_t kStateBytes = kWidth * kHeight * kChannels * sizeof(__half);
 constexpr std::size_t kCacheOffset = kMiddleBytes + 2U * kStateBytes;
+
+// Les plans fixes restent à la sortie de l'encodeur. Les canaux 56 à 111,
+// issus de la colle, restent groupés par pixel.
+template <class G>
+__device__ __forceinline__ void load_planar_x2(__half* tile, rn::Params p, const __half* planar, int q,
+                                               int y0, int x0) {
+  constexpr int kLds = 24, kPairs = (G::kIC - 1) / 2;
+  const int channels = q == kPlanarChannels / 16 ? kPlanarChannels % 16 : 16;
+  const int thread = static_cast<int>(threadIdx.x);
+  const int plane = p.ih * p.iw;
+  const auto index = [](int r, int col, int channel) { return (r * G::kIC + col) * kLds + channel; };
+  // x0 et la largeur sont pairs. Le pixel impair à gauche est chargé à part.
+  for (int i = thread; i < channels * G::kIR * kPairs; i += rn::kThreads) {
+    const int c = i / (G::kIR * kPairs), r = (i / kPairs) % G::kIR, col = i % kPairs;
+    const int x = x0 + 2 * col, y = y0 + r;
+    const bool valid = y >= 0 && y < p.ih && x < p.iw;
+    const __half* source = valid ? planar + (q * 16 + c) * plane + y * p.iw + x : planar;
+    const __half2 pair =
+        valid ? __ldg(reinterpret_cast<const __half2*>(source)) : __floats2half2_rn(0.F, 0.F);
+    tile[index(r, G::kEven + col, c)] = __low2half(pair);
+    tile[index(r, col + 1, c)] = __high2half(pair);
+  }
+  for (int i = thread; i < channels * G::kIR; i += rn::kThreads) {
+    const int c = i % channels, r = i / channels, x = x0 - 1, y = y0 + r;
+    const bool valid = y >= 0 && y < p.ih && x >= 0 && x < p.iw;
+    tile[index(r, 0, c)] = valid ? __ldg(planar + (q * 16 + c) * plane + y * p.iw + x) : __ushort_as_half(0);
+  }
+  if (q != kPlanarChannels / 16) return;
+  const auto base = rn::smem_u32(tile);
+  for (int i = thread; i < G::kIR * G::kIC; i += rn::kThreads) {
+    const int r = i / G::kIC, col = i % G::kIC, x = x0 + col - 1, y = y0 + r;
+    const bool valid = y >= 0 && y < p.ih && x >= 0 && x < p.iw;
+    const auto* source = valid ? p.in + (y * p.iw + x) * p.in_ld + kPlanarChannels : p.in;
+    const int at = index(r, rn::smem_col<2, G::kIC>(col), kPlanarChannels % 16);
+    rn::cp_async16(base + static_cast<std::uint32_t>(at * 2), source, valid);
+  }
+}
 
 // La première couche somme les 48 canaux fixes en premier. Sauver ses fragments
 // FP32 avant les prises mobiles permet de reprendre la même suite de MMA, au
 // même arrondi. Le cache n'a besoin d'être relu que si le moteur a déjà gardé
 // les images de la paire.
-template <bool Reuse>
-__global__ void __launch_bounds__(rn::kThreads, 2) conv_with_cache(rn::Params p, float4* cache) {
+template <bool Reuse, bool Planar = false>
+__global__ void __launch_bounds__(rn::kThreads, 2)
+    conv_with_cache(rn::Params p, float4* cache, const __half* planar = nullptr) {
   constexpr int Kc = 16, CT = 48, Rows = 1, S = 2, KH = 3;
   using Geometry = rn::Geometry<KH, S, Rows>;
   extern __shared__ __align__(16) unsigned char raw[];
@@ -61,7 +100,10 @@ __global__ void __launch_bounds__(rn::kThreads, 2) conv_with_cache(rn::Params p,
 #pragma unroll 1
   for (int q = begin; q < kcs; ++q) {
     if (q != begin) __syncthreads();
-    rn::load_nhwc<Kc, S, Geometry::kIR, Geometry::kIC, false>(tile, p, q * Kc, ty * S - 1, tx * S - 1);
+    if (Planar && q <= kPlanarChannels / Kc)
+      load_planar_x2<Geometry>(tile, p, planar, q, ty * S - 1, tx * S);
+    else
+      rn::load_nhwc<Kc, S, Geometry::kIR, Geometry::kIC, false>(tile, p, q * Kc, ty * S - 1, tx * S - 1);
     rn::cp_async_wait_all();
     __syncthreads();
     rn::accumulate<Kc, CT, KH, S, Rows, rn::Acc::kF32, false>(acc, tile, weights, q, kcs, 0, 9, warp, lane);
@@ -202,7 +244,7 @@ class Native final : public DrbaTailNative {
   }
 
   cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse,
-                      const DrbaGlueParams* hot_glue, bool compact_tile) const override {
+                      const DrbaGlueParams* hot_glue, bool compact_tile, const void* planar) const override {
     auto* const base = workspace_.as<std::byte>();
     auto* const mid = reinterpret_cast<__half*>(base);
     auto* state = reinterpret_cast<__half*>(base + kMiddleBytes);
@@ -223,6 +265,14 @@ class Native final : public DrbaTailNative {
             <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<false>, stream>>>(entry, *hot_glue,
                                                                                       cache);
       if (auto result = cudaGetLastError(); result != cudaSuccess) return result;
+    } else if (planar != nullptr) {
+      const auto* planes = static_cast<const __half*>(planar);
+      if (reuse)
+        conv_with_cache<true, true>
+            <<<first.layer.grid, rn::kThreads, first.layer.smem, stream>>>(entry, cache, planes);
+      else
+        conv_with_cache<false, true>
+            <<<first.layer.grid, rn::kThreads, first.layer.smem, stream>>>(entry, cache, planes);
     } else if (reuse)
       conv_with_cache<true><<<first.layer.grid, rn::kThreads, first.layer.smem, stream>>>(entry, cache);
     else
