@@ -145,10 +145,11 @@ Le rapprochement a été effectué avec `bilan-corrige.py` de la série.
   0,066 ms dans un scénario où son aller-retour passerait entièrement en DDR à 504 Go/s. Les quelques
   étapes grossières du moteur font encore circuler leurs `X_k` et `Y_k` globaux.
 - DistilDRBA conserve les frontières planaires `X_0` et `X_1` (16,12 Mo aller-retour pour les deux).
-  Le bloc fin travaille sur `X_2` groupé au pas 112. À chaud, la colle réécrit 56 canaux et la
-  convolution relit 64 canaux avec le remplissage (31,33 Mo logiques). À froid, les 112 canaux
-  sont écrits et relus (58,49 Mo). La reprise à chaud relit au moins 6,27 Mo de sommes intermédiaires
-  FP32. La tête écrit `Y_2` à basse résolution (pas 24) et le warp final lit 20 canaux de cette sortie.
+  Le bloc fin travaille sur `X_2` groupé au pas 112. À chaud, la colle fusionnée avec la convolution
+  retire l'écriture de 56 canaux et leur relecture sur 64 canaux avec le remplissage (31,33 Mo
+  logiques). La colle séparée reste le repli. À froid, les 112 canaux sont écrits et relus
+  (58,49 Mo). La reprise à chaud relit au moins 6,27 Mo de sommes intermédiaires FP32.
+  La tête écrit `Y_2` à basse résolution (pas 24) et le warp final lit 20 canaux de cette sortie.
   Le warp lit deux sources RGB selon le flot et écrit une sortie RGB, soit un volume de référence
   de 37,60 Mo pour des lectures couvrant les deux sources une fois. Les déplacements et la localité
   des lectures changent ce volume.
@@ -171,11 +172,15 @@ inclut le warp interne du modèle et le bloc final natif avec réemploi. Les dé
 | --- | ---: | ---: | ---: | ---: |
 | RIFE 4.25 | 375,81 Mo | 2 303,62 Mo | 2,577 ms | 0,838 ms |
 | RIFE 4.22 Lite | 358,92 Mo | 2 244,00 Mo | 1,918 ms | 0,817 ms |
-| DistilDRBA v2 Lite | 120,37 Mo | 737,08 Mo | 0,795 ms | 0,268 ms |
+| DistilDRBA v2 Lite, colle séparée | 120,37 Mo | 737,08 Mo | 0,795 ms | 0,268 ms |
+| DistilDRBA v2 Lite, colle chaude fusionnée | 98,07 Mo | 688,84 Mo | 0,710 ms | 0,251 ms |
 
 La borne prend le plus grand des deux temps estimés avec les octets mesurés. Elle
-porte sur le trafic de ces graphes et exclut la composition. Il faut mesurer les
-octets d'une variante fusionnée pour recalculer son propre plafond.
+porte sur le trafic de ces graphes et exclut la composition. Les deux captures de DistilDRBA
+encadrent le dixième rejeu à chaud. Après fusion, les baisses de trafic sont de 18,5 % en DDR
+et de 6,5 % au L2. Le quotient de la borne de trafic par la durée profilée passe de 33,7 à 35,3 %.
+Ce quotient mesure l'écart aux débits mémoire pour le volume observé, hors coût de calcul et
+hors plafond après les autres simplifications.
 
 Un graphe RIFE 4.25 avec un nouvel encodage, à la même taille, a lu et écrit 451,13 Mo
 en DDR et transféré 2 516,07 Mo au L2. Pour ce trafic, la borne est de 0,916 ms. La capture
@@ -191,5 +196,5 @@ et 2 588,52 Mo au L2. Sa borne de trafic est de 0,942 ms et sa durée profilée 
   pour que la réduction du nombre de produits se traduise dans le lecteur. [Détail du banc](rife-natif.md).
 - DistilDRBA applique déjà Winograd vertical sur huit résidus de la queue. Passer de cette queue verticale
   et de blocs grossiers directs à Winograd 2D sur tous les 3×3 éligibles ne retire que 0,041 à 0,044 ms de
-  calcul Tensor au pic FP16. Une préparation de `X_2` lue directement par la première convolution et la
-  conservation de ses sommes intermédiaires ont un potentiel du même ordre. [Voie actuelle](drba-fusionne.md).
+  calcul Tensor au pic FP16. La préparation de `X_2` est déjà fusionnée à chaud sur Ada, avec réemploi
+  de ses sommes intermédiaires. À froid, le transfert de `X_2` reste entier. [Voie actuelle](drba-fusionne.md).

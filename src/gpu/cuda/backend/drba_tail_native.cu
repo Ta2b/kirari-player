@@ -202,7 +202,7 @@ class Native final : public DrbaTailNative {
   }
 
   cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse,
-                      const DrbaGlueParams* hot_glue) const override {
+                      const DrbaGlueParams* hot_glue, bool compact_tile) const override {
     auto* const base = workspace_.as<std::byte>();
     auto* const mid = reinterpret_cast<__half*>(base);
     auto* state = reinterpret_cast<__half*>(base + kMiddleBytes);
@@ -215,8 +215,13 @@ class Native final : public DrbaTailNative {
       if (!reuse || hot_glue->width != entry.iw || hot_glue->height != entry.ih || hot_glue->x == nullptr ||
           hot_glue->y == nullptr || hot_glue->pair01 == nullptr)
         return cudaErrorInvalidValue;
-      drba_hot::conv_glue_hot<<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem, stream>>>(
-          entry, *hot_glue, cache);
+      if (compact_tile)
+        drba_hot::conv_glue_hot<true>
+            <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<true>, stream>>>(entry, *hot_glue, cache);
+      else
+        drba_hot::conv_glue_hot<false>
+            <<<first.layer.grid, rn::kThreads, drba_hot::kFusedSmem<false>, stream>>>(entry, *hot_glue,
+                                                                                      cache);
       if (auto result = cudaGetLastError(); result != cudaSuccess) return result;
     } else if (reuse)
       conv_with_cache<true><<<first.layer.grid, rn::kThreads, first.layer.smem, stream>>>(entry, cache);

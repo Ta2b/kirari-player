@@ -80,6 +80,22 @@ tient dans six noyaux.
   utilise les tampons du chargement. En cas d'écart, le bloc natif garde sa colle.
   La lecture finale a validé la fusion seule et avec SPAN Performance, ainsi que
   le repli TensorRT quand l'option de bloc natif est décochée.
+- Dans cette colle fusionnée, le placement des deux demi-fragments K8 peut permuter
+  leurs banques sans les huit canaux de remplissage. Les coordonnées du warp sont
+  préparées une fois pour les trois tranches qui les réutilisent. Les deux fractions
+  restent en FP32. La tuile utilise 32 760 octets partagés dans les deux cas, avec
+  168 registres au lieu de 190. CUDA confirme trois blocs résidents par SM au lieu
+  de deux sur la RTX 4070 Ti. Les deux scènes du banc gardent les mêmes 1 566 720 codes
+  FP16 par cas et le même cache. Les médianes de la colle fusionnée passent de 87,75
+  à 80,19 µs et de 76,72 à 62,11 µs. Le premier passage a un p95 très dispersé.
+  En lecture 1080p ×8, les deux témoins donnent 0,627–0,674 ms de médiane moteur et
+  0,974–1,033 ms au p95. Les deux passages avec la permutation donnent
+  0,590–0,607 ms et 0,951–1,006 ms. Les retours de composition Wayland se cadencent
+  à 165,00 i/s dans la fenêtre centrale, avec 47 à 48 soumissions sans retour par passage.
+  Le contrôle FP16 au chargement conserve la colle fusionnée précédente en cas d'écart.
+  La variante de tuile double W32 sur les huit résidus C96 garde aussi les bits,
+  mais abaisse l'occupation de six à trois blocs par SM et coûte 147–148 µs
+  contre 109–110 µs. Elle reste au banc.
 - En lecture Wayland 1080p, une capture Nsight Systems à ×2 mesure 70 relectures du même graphe de
   51 nœuds, à 1,029 ms de médiane. La somme des durées des noyaux atteint 1,028 ms, avec 1,3 µs d'écart
   médian entre la durée du graphe et celle de ses noyaux. La colle d'entrée (0,158 ms) et le rangement

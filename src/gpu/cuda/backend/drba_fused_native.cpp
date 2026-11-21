@@ -212,7 +212,13 @@ std::expected<bool, Refusal> DrbaFusedEngine::verify_hot_glue(cudaStream_t strea
   };
   hot_glue_ = result && written(reference) && same_tail_fields(reference, candidate);
   if (!result) return std::unexpected(result.error());
-  return hot_glue_;
+  if (!hot_glue_) return false;
+
+  hot_xor_ = true;
+  result = fetch(candidate);
+  hot_xor_ = result && same_tail_fields(reference, candidate);
+  if (!result) return std::unexpected(result.error());
+  return true;
 }
 
 }  // namespace kirari::gpu::cuda

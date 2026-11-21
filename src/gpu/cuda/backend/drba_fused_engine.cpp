@@ -173,7 +173,9 @@ std::expected<void, Refusal> DrbaFusedEngine::check_loaded(const std::shared_ptr
   if (tail_) {
     const auto trial = verify_hot_glue(scratch.stream, shared, inputs, motion);
     if (!trial && trial.error().code == RefusalCode::DeviceLost) return std::unexpected(trial.error());
-    tail_notice_ += hot_glue_ ? ", colle chaude exacte" : ", colle chaude écartée";
+    tail_notice_ += hot_xor_    ? ", colle chaude exacte XOR"
+                    : hot_glue_ ? ", colle chaude exacte"
+                                : ", colle chaude écartée";
   }
   // Une capture refusée pendant l'essai laisse la chaîne tourner sans graphe : ce n'est pas un refus. Les
   // graphes de l'essai, sur des adresses qui disparaissent, ne servent plus ; les séries d'échecs repartent
@@ -305,7 +307,7 @@ std::expected<void, Refusal> DrbaFusedEngine::run_blocks(cudaStream_t stream,
     const auto i = static_cast<std::size_t>(b);
     if (tail_ && b == kLastBlock) {
       if (auto ok = cuda_check(tail_->enqueue(stream, at_ptr(packed_x_), at_ptr(layout_.y[i]), times_only,
-                                              hot.y == nullptr ? nullptr : &hot),
+                                              hot.y == nullptr ? nullptr : &hot, hot_xor_),
                                "DistilDRBA : bloc 2 natif");
           !ok)
         return ok;

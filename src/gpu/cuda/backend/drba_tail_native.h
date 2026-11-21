@@ -21,7 +21,7 @@ class DrbaTailNative {
 
   // reuse désigne les mêmes images, comme D6. Avec la colle chaude, seul le cache d'entrée est relu.
   virtual cudaError_t enqueue(cudaStream_t stream, const void* input, void* output, bool reuse,
-                              const DrbaGlueParams* hot_glue = nullptr) const = 0;
+                              const DrbaGlueParams* hot_glue = nullptr, bool compact_tile = false) const = 0;
 };
 
 }  // namespace kirari::gpu::cuda

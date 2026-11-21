@@ -1,5 +1,8 @@
 // La colle X2 fournit les quatre tranches mobiles à la convolution du dernier bloc.
 #pragma once
+
+#include <type_traits>
+
 #include "gpu/cuda/backend/drba_fused_kernels.h"
 #include "gpu/cuda/backend/drba_fused_sampling.cuh"
 #include "gpu/cuda/backend/rife_native_plan.h"
@@ -14,10 +17,52 @@ using drba_sample::sample;
 using drba_sample::SourceZ;
 using drba_sample::Tap;
 using drba_sample::tap_of;
-constexpr int kKc = 16, kCt = 48, kRows = 1, kS = 2, kKh = 3, kLds = kKc + 8;
+constexpr int kKc = 16, kCt = 48, kRows = 1, kS = 2, kKh = 3;
 using G = rn::Geometry<kKh, kS, kRows>;
 constexpr int kCells = G::kIR * G::kIC;
-constexpr int kFusedSmem = kCells * (kLds * sizeof(__half) + sizeof(uint2));
+template <bool Xor>
+constexpr int input_pitch = Xor ? kKc : kKc + 8;
+template <bool Xor>
+constexpr int kFusedSmem = kCells * (input_pitch<Xor> * sizeof(__half) + (Xor ? 24 : 8));
+
+struct CompactTap {
+  unsigned anchor;
+  float wx, wy;
+};
+static_assert(sizeof(CompactTap) == 12);
+
+__device__ __forceinline__ CompactTap pack_tap(const Tap& t) {
+  const unsigned next_x = t.i01 != t.i00, next_y = t.i10 != t.i00;
+  return {static_cast<unsigned>(t.i00) | (next_x << 30U) | (next_y << 31U), t.wx, t.wy};
+}
+
+__device__ __forceinline__ Tap unpack_tap(const CompactTap& packed, int width) {
+  const int base = static_cast<int>(packed.anchor & ((1U << 30U) - 1U));
+  const int dx = static_cast<int>((packed.anchor >> 30U) & 1U);
+  const int dy = static_cast<int>(packed.anchor >> 31U) * width;
+  return {base, base + dx, base + dy, base + dx + dy, packed.wx, packed.wy};
+}
+
+// Chaque séquence de huit pixels atteint huit banques vectorielles distinctes.
+// Les deux demi-fragments K8 sont échangés au changement du bit 2 du pixel.
+__host__ __device__ constexpr int vector_xor(int pixel, int half) {
+  return half ^ ((pixel >> 2) & 1);
+}
+
+template <bool Xor>
+using Motion = std::conditional_t<Xor, CompactTap, uint2>;
+
+template <bool Xor>
+__device__ __forceinline__ void store_vectors(__half* tile, int pixel, uint4 a, uint4 b) {
+  auto* out = reinterpret_cast<uint4*>(tile + pixel * input_pitch<Xor>);
+  if constexpr (Xor) {
+    out[vector_xor(pixel, 0)] = a;
+    out[vector_xor(pixel, 1)] = b;
+  } else {
+    out[0] = a;
+    out[1] = b;
+  }
+}
 
 __device__ __forceinline__ bool present(const DrbaGlueParams& g, int x, int y) {
   return x >= 0 && y >= 0 && x < g.width && y < g.height;
@@ -32,7 +77,9 @@ __device__ __forceinline__ unsigned half_pair(__half a, __half b) {
   return static_cast<unsigned>(__half_as_ushort(a)) | (static_cast<unsigned>(__half_as_ushort(b)) << 16U);
 }
 
-__device__ __forceinline__ void set_flows(uint2* flows, const DrbaGlueParams& g, int tx, int ty, int tid) {
+template <bool Xor>
+__device__ __forceinline__ void set_flows(Motion<Xor>* flows, const DrbaGlueParams& g, int tx, int ty,
+                                          int tid) {
   const SourceZ z{static_cast<const __half*>(g.y), g.height / 2, g.width / 2};
   for (int i = tid; i < kCells; i += rn::kThreads) {
     const int x = tx + i % G::kIC, y = ty + i / G::kIC;
@@ -43,7 +90,14 @@ __device__ __forceinline__ void set_flows(uint2* flows, const DrbaGlueParams& g,
       packed = {half_pair(__float2half_rn(r[0] * 2.F), __float2half_rn(r[1] * 2.F)),
                 half_pair(__float2half_rn(r[2] * 2.F), __float2half_rn(r[3] * 2.F))};
     }
-    flows[i] = packed;
+    if constexpr (Xor) {
+      if (!present(g, x, y)) continue;
+      flows[i] = pack_tap(tap_of(x, y, decode_flow(packed, 0), decode_flow(packed, 1), g.width, g.height));
+      flows[kCells + i] =
+          pack_tap(tap_of(x, y, decode_flow(packed, 2), decode_flow(packed, 3), g.width, g.height));
+    } else {
+      flows[i] = packed;
+    }
   }
 }
 
@@ -73,9 +127,9 @@ __device__ __forceinline__ uint4 pack_quad(const Pixel& p) {
           half_pair(p.channel<base + 6>(), p.channel<base + 7>())};
 }
 
-template <int Q>
-__device__ __forceinline__ void set_dynamic(__half* tile, const uint2* flows, const DrbaGlueParams& g, int tx,
-                                            int ty, int tid, float tau, bool before) {
+template <bool Xor, int Q>
+__device__ __forceinline__ void set_dynamic(__half* tile, const Motion<Xor>* flows, const DrbaGlueParams& g,
+                                            int tx, int ty, int tid, float tau, bool before) {
   static_assert(Q >= 3 && Q <= 5);
   const int area = g.width * g.height;
   const auto* src = static_cast<const __half*>(g.x);
@@ -84,27 +138,26 @@ __device__ __forceinline__ void set_dynamic(__half* tile, const uint2* flows, co
     const int x = tx + col, y = ty + row;
     uint4 a{}, b{};
     if (present(g, x, y)) {
-      const auto f = flows[i];
+      const auto tap = [&](int image) {
+        if constexpr (Xor) {
+          return unpack_tap(flows[image * kCells + i], g.width);
+        } else {
+          const auto f = flows[i];
+          return tap_of(x, y, decode_flow(f, 2 * image), decode_flow(f, 2 * image + 1), g.width, g.height);
+        }
+      };
       const int at = y * g.width + x;
       const __half time = g.scalar_time ? __float2half_rn(tau) : src[(g.compact_time ? 57 : 95) * area + at];
-      const Pixel p{src,
-                    tap_of(x, y, decode_flow(f, 0), decode_flow(f, 1), g.width, g.height),
-                    tap_of(x, y, decode_flow(f, 2), decode_flow(f, 3), g.width, g.height),
-                    area,
-                    at,
-                    before ? 0 : 6,
-                    before ? 9 : 41,
-                    time};
+      const Pixel p{src, tap(0), tap(1), area, at, before ? 0 : 6, before ? 9 : 41, time};
       a = pack_quad<Q, 0>(p);
       b = pack_quad<Q, 1>(p);
     }
-    auto* dest = reinterpret_cast<uint4*>(tile + (row * G::kIC + rn::smem_col<kS, G::kIC>(col)) * kLds);
-    dest[0] = a;
-    dest[1] = b;
+    store_vectors<Xor>(tile, row * G::kIC + rn::smem_col<kS, G::kIC>(col), a, b);
   }
 }
 
-__device__ __forceinline__ void set_controls(__half* tile, const uint2* flows, const DrbaGlueParams& g,
+template <bool Xor>
+__device__ __forceinline__ void set_controls(__half* tile, const Motion<Xor>* flows, const DrbaGlueParams& g,
                                              int tx, int ty, int tid) {
   const SourceZ z{static_cast<const __half*>(g.y), g.height / 2, g.width / 2};
   for (int i = tid; i < kCells; i += rn::kThreads) {
@@ -112,23 +165,73 @@ __device__ __forceinline__ void set_controls(__half* tile, const uint2* flows, c
     const int x = tx + col, y = ty + row;
     uint4 a{}, b{};
     if (present(g, x, y)) {
-      float r[9];
-      enlarge<9>(z, 4, 2, x, y, r);
-      a = {half_pair(__float2half_rn(r[0]), __float2half_rn(r[1])),
-           half_pair(__float2half_rn(r[2]), __float2half_rn(r[3])),
-           half_pair(__float2half_rn(r[4]), __float2half_rn(r[5])),
-           half_pair(__float2half_rn(r[6]), __float2half_rn(r[7]))};
-      const auto f = flows[i];
-      b = {static_cast<unsigned>(__half_as_ushort(__float2half_rn(r[8]))) | (f.x << 16U),
-           (f.x >> 16U) | (f.y << 16U), f.y >> 16U, 0U};
+      if constexpr (Xor) {
+        float r[13];
+        enlarge<13>(z, 0, 2, x, y, r);
+        a = {half_pair(__float2half_rn(r[4]), __float2half_rn(r[5])),
+             half_pair(__float2half_rn(r[6]), __float2half_rn(r[7])),
+             half_pair(__float2half_rn(r[8]), __float2half_rn(r[9])),
+             half_pair(__float2half_rn(r[10]), __float2half_rn(r[11]))};
+        b = {half_pair(__float2half_rn(r[12]), __float2half_rn(r[0] * 2.F)),
+             half_pair(__float2half_rn(r[1] * 2.F), __float2half_rn(r[2] * 2.F)),
+             half_pair(__float2half_rn(r[3] * 2.F), __ushort_as_half(0)), 0U};
+      } else {
+        float r[9];
+        enlarge<9>(z, 4, 2, x, y, r);
+        a = {half_pair(__float2half_rn(r[0]), __float2half_rn(r[1])),
+             half_pair(__float2half_rn(r[2]), __float2half_rn(r[3])),
+             half_pair(__float2half_rn(r[4]), __float2half_rn(r[5])),
+             half_pair(__float2half_rn(r[6]), __float2half_rn(r[7]))};
+        const auto f = flows[i];
+        b = {static_cast<unsigned>(__half_as_ushort(__float2half_rn(r[8]))) | (f.x << 16U),
+             (f.x >> 16U) | (f.y << 16U), f.y >> 16U, 0U};
+      }
     }
-    auto* dest = reinterpret_cast<uint4*>(tile + (row * G::kIC + rn::smem_col<kS, G::kIC>(col)) * kLds);
-    dest[0] = a;
-    dest[1] = b;
+    store_vectors<Xor>(tile, row * G::kIC + rn::smem_col<kS, G::kIC>(col), a, b);
   }
 }
 
-__global__ void __launch_bounds__(rn::kThreads, 2)
+__device__ __forceinline__ void accumulate_xor(rn::Frag<rn::Acc::kF32> (&acc)[2][6], const __half* tile,
+                                               const uint4* w, int q, int warp, int lane) {
+  constexpr int groups = kCt / 16, chunks = 7;
+  const std::uint32_t base = rn::smem_u32(tile);
+  const auto* wl = w + lane;
+  const auto fetch = [&](uint4(&b)[groups], int tap) {
+    const long ks = static_cast<long>(tap) * chunks + q;
+#pragma unroll
+    for (int n = 0; n < groups; ++n) b[n] = __ldg(wl + (ks * groups + n) * 32);
+  };
+  uint4 b[groups];
+  fetch(b, 0);
+#pragma unroll 1
+  for (int tap = 0; tap < 9; ++tap) {
+    uint4 next[groups];
+    if (tap < 8) fetch(next, tap + 1);
+    const int dy = tap / 3, dx = tap % 3;
+    const int col0 = dx == 1 ? G::kEven : dx / 2;
+    std::uint32_t a[2][4];
+#pragma unroll
+    for (int f = 0; f < 2; ++f) {
+      const int pixel = (2 * warp + dy) * G::kIC + 16 * f + col0 + (lane & 15);
+      const int half = vector_xor(pixel, lane >> 4);
+      rn::ldmatrix4(a[f], base + static_cast<std::uint32_t>((pixel * input_pitch<true> + half * 8) * 2));
+    }
+#pragma unroll
+    for (int f = 0; f < 2; ++f) {
+#pragma unroll
+      for (int n = 0; n < groups; ++n) {
+        acc[f][2 * n].mma(a[f], b[n].x, b[n].y);
+        acc[f][2 * n + 1].mma(a[f], b[n].z, b[n].w);
+      }
+    }
+    if (tap < 8)
+#pragma unroll
+      for (int n = 0; n < groups; ++n) b[n] = next[n];
+  }
+}
+
+template <bool Xor>
+__global__ void __launch_bounds__(rn::kThreads, Xor ? 3 : 2)
     conv_glue_hot(rn::Params p, DrbaGlueParams g, const float4* cache) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ != 890
   // Cette fusion est sélectionnée uniquement avec le bloc fin natif Ada.
@@ -136,12 +239,12 @@ __global__ void __launch_bounds__(rn::kThreads, 2)
 #else
   extern __shared__ __align__(16) unsigned char raw[];
   auto* const tile = reinterpret_cast<__half*>(raw);
-  auto* const flows = reinterpret_cast<uint2*>(tile + kCells * kLds);
+  auto* const flows = reinterpret_cast<Motion<Xor>*>(tile + kCells * input_pitch<Xor>);
   const int tid = static_cast<int>(threadIdx.x), warp = tid / 32, lane = tid & 31;
   const int ty = static_cast<int>(blockIdx.y) * G::kTH;
   const int tx = static_cast<int>(blockIdx.x) * rn::kTW;
   const int left = tx * kS - 1, top = ty * kS - 1;
-  set_flows(flows, g, left, top, tid);
+  set_flows<Xor>(flows, g, left, top, tid);
   __syncthreads();
 
   const auto full_area = static_cast<std::size_t>(g.full_width) * g.full_height;
@@ -166,20 +269,23 @@ __global__ void __launch_bounds__(rn::kThreads, 2)
     if (q != 3) __syncthreads();
     switch (q) {
       case 3:
-        set_dynamic<3>(tile, flows, g, left, top, tid, tau, before);
+        set_dynamic<Xor, 3>(tile, flows, g, left, top, tid, tau, before);
         break;
       case 4:
-        set_dynamic<4>(tile, flows, g, left, top, tid, tau, before);
+        set_dynamic<Xor, 4>(tile, flows, g, left, top, tid, tau, before);
         break;
       case 5:
-        set_dynamic<5>(tile, flows, g, left, top, tid, tau, before);
+        set_dynamic<Xor, 5>(tile, flows, g, left, top, tid, tau, before);
         break;
       default:
-        set_controls(tile, flows, g, left, top, tid);
+        set_controls<Xor>(tile, flows, g, left, top, tid);
     }
     __syncthreads();
-    rn::accumulate<kKc, kCt, kKh, kS, kRows, rn::Acc::kF32, false>(acc, tile, p.w, q, kChunks, 0, 9, warp,
-                                                                   lane);
+    if constexpr (Xor)
+      accumulate_xor(acc, tile, p.w, q, warp, lane);
+    else
+      rn::accumulate<kKc, kCt, kKh, kS, kRows, rn::Acc::kF32, false>(acc, tile, p.w, q, kChunks, 0, 9, warp,
+                                                                     lane);
   }
   __syncthreads();
   rn::stage<kCt, kRows, rn::Acc::kF32>(acc, tile, p.bias, warp, lane);

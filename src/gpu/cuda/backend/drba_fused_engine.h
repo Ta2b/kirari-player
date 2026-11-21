@@ -110,6 +110,7 @@ class DrbaFusedEngine final : public Engine {
   bool shared_finish_ = false;
   bool packed_tail_ = false;
   bool hot_glue_ = false;
+  bool hot_xor_ = false;
   std::size_t packed_x_ = 0;
   kernels::DrbaFusedLayout layout_;
   // Début des tampons intermédiaires dans la zone : au-dessus des activations de ses morceaux et de celles
