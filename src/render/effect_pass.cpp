@@ -76,12 +76,13 @@ struct EffectPass::Impl {
     pl_tex_destroy(gpu, &guide.texture);
   }
 
-  bool upload(Grid& grid);
-  void set(Grid& grid, int cols, int rows, std::span<const float> values, double cover_x, double cover_y);
+  bool upload(Grid& grid) const;
+  void set(Grid& grid, int cols, int rows, std::span<const float> values, double cover_x,
+           double cover_y) const;
   pl_hook_res run(const pl_hook_params& params);
 };
 
-bool EffectPass::Impl::upload(Grid& grid) {
+bool EffectPass::Impl::upload(Grid& grid) const {
   if (grid.texture == nullptr || grid.texture->params.w != grid.cols || grid.texture->params.h != grid.rows) {
     pl_tex_destroy(gpu, &grid.texture);
     pl_tex_params tp{};
@@ -212,7 +213,7 @@ std::expected<std::unique_ptr<EffectPass>, Refusal> EffectPass::create(pl_gpu gp
 }
 
 void EffectPass::Impl::set(Grid& grid, int cols, int rows, std::span<const float> values, double cover_x,
-                           double cover_y) {
+                           double cover_y) const {
   const auto count =
       static_cast<std::size_t>(std::max(cols, 0)) * static_cast<std::size_t>(std::max(rows, 0));
   if (count == 0 || values.size() != count) {

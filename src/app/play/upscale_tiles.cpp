@@ -60,7 +60,8 @@ void SpanTiles::set_geometry(const PairBlocks& blocks) {
   coverage_.resize(sums_.size());
   for (std::size_t block = 0; block < coverage_.size(); ++block) {
     const auto col = static_cast<float>(block % block_cols_);
-    const auto row = static_cast<float>(block / block_cols_);
+    const std::size_t row_index = block / block_cols_;
+    const auto row = static_cast<float>(row_index);
     // Le rectangle est arrondi vers l'extérieur, comme le bloc recouvrant les tuiles.
     const int x0 = static_cast<int>(std::floor(col * block_px_));
     const int y0 = static_cast<int>(std::floor(row * block_px_));
