@@ -29,7 +29,7 @@ std::unexpected<StageFailure> stage_refused(Refusal refusal, std::optional<Chain
 // un refus n'arrête pas la lecture). C08-12 : un refus de construction est retenu pour la séance (inner_key),
 // la réouverture suivante ne la refait pas. Faux : la fenêtre fermée pendant la construction.
 bool load_calm_rife(Player& p, const gpu::BackendInit& init, ChainEngines& c, InnerFallbacks& inner,
-                    const std::string& library, const std::filesystem::path& models_dir) {
+                    const std::string& library, const std::filesystem::path& models_dir, bool cuda_direct) {
   if (!c.rife_motion || !p.options.rife_calm_model) return true;
   const auto log = log_channel("app");
   const std::filesystem::path& calm = *p.options.rife_calm_model;
@@ -39,21 +39,26 @@ bool load_calm_rife(Player& p, const gpu::BackendInit& init, ChainEngines& c, In
               core::to_utf8(calm.filename()));
     return true;
   }
-  auto derived = motion_model(calm, models_dir);
+  auto derived =
+      cuda_direct ? std::expected<std::filesystem::path, Refusal>(calm) : motion_model(calm, models_dir);
   if (!derived) {
     log->warn("RIFE des paires calmes ignoré : {}", derived.error().detail);
     return true;
   }
   const kernels::RifeGeometry& g = c.geometry;
-  const std::string key = inner_key("rife-calm", library, *derived, g.padded_width, g.padded_height);
+  const std::string key = inner_key(cuda_direct ? "rife-calm-cuda" : "rife-calm", library, *derived,
+                                    g.padded_width, g.padded_height);
   if (inner.refused(ChainStage::Motion, key) != nullptr) return true;
-  auto loaded = prepare_engine(p, init, *c.backend, *derived,
-                               gpu::Shape{.dims = {1, c.rife_planes, g.padded_height, g.padded_width}},
-                               EngineLabel{.name = "RIFE calme",
-                                           .model = core::to_utf8(derived->stem()),
-                                           .width = g.padded_width,
-                                           .height = g.padded_height},
-                               gpu::Lane::Interpolate);
+  auto loaded =
+      cuda_direct
+          ? prepare_rife_fused(p, init, *c.backend, calm, models_dir, g, prepare::RifeFusedOutput::Motion)
+          : prepare_engine(p, init, *c.backend, *derived,
+                           gpu::Shape{.dims = {1, c.rife_planes, g.padded_height, g.padded_width}},
+                           EngineLabel{.name = "RIFE calme",
+                                       .model = core::to_utf8(derived->stem()),
+                                       .width = g.padded_width,
+                                       .height = g.padded_height},
+                           gpu::Lane::Interpolate);
   if (!loaded) {
     log->warn("RIFE des paires calmes ignoré : {}", loaded.error().detail);
     inner.failed(ChainStage::Motion, key, loaded.error());
@@ -187,7 +192,8 @@ std::expected<bool, StageFailure> RifeLoad::cuda_direct() {
   if (!*loaded) return false;
   (motion ? c.rife_motion : c.rife) = std::move(**loaded);
   c.rife_fused = true;
-  return true;
+  if (!load_calm_rife(p, init, c, inner, library, models_dir, true)) return false;
+  return load_half_rife(p, init, c, settings, inner, library, models_dir, true).value_or(false);
 }
 
 std::expected<bool, StageFailure> RifeLoad::selected(bool use_rife) {
@@ -207,8 +213,8 @@ std::expected<bool, StageFailure> RifeLoad::selected(bool use_rife) {
     auto motion = motion_variant();
     if (!motion || !*motion) return motion;
   }
-  if (!load_calm_rife(p, init, c, inner, library, models_dir)) return false;
-  if (!load_half_rife(p, init, c, settings, inner, library, models_dir)) return false;
+  if (!load_calm_rife(p, init, c, inner, library, models_dir, false)) return false;
+  if (!load_half_rife(p, init, c, settings, inner, library, models_dir, false)) return false;
   if (use_rife && !c.rife_motion) {
     auto loaded = image();
     if (!loaded || !*loaded) return loaded;

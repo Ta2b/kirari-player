@@ -330,6 +330,10 @@ envoie les poids et vérifie l'exécution de la chaîne CUDA. Si le modèle ou
 la forme sont refusés, ce choix ne charge pas un moteur TensorRT à leur place.
 Le réglage est décoché par défaut et s'applique au rechargement de la vidéo.
 Le backend NVIDIA reste chargé pour la chaîne vidéo et les autres modèles.
+Si l'échelle par paire ou le modèle léger des paires calmes est demandé, il
+se charge aussi directement en CUDA. Si ce modèle secondaire est refusé, le
+RIFE CUDA principal reste actif. Les refus mémorisés pour la séance restent
+propres au mode de chargement.
 
 Sur la RTX 4070 Ti en 1080p, avec des profils et caches vides, le chargement
 du moteur direct a pris environ 0,15–0,17 s après la préparation du manifeste.

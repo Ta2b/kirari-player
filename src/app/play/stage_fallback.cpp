@@ -40,9 +40,10 @@ std::string stage_signature(ChainStage stage, const PlaySettings& s, int source_
                                                   order_factor(s, rates.display_hz, rates.source_fps));
   // L'échelle par paire charge un second RIFE et réduit a et b : son refus ne vaut pas sans elle (la décocher
   // rend l'interpolation sans attendre la fermeture du lecteur).
-  return std::format("motion|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}", common, name(s.motion_engine), s.rife_model,
-                     name(s.motion_precision), s.rife_fused, s.drba_fused, s.pair_scale ? "half" : "full",
-                     s.upscale, name(s.span_order), after ? "warp-after" : "warp-before");
+  return std::format("motion|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}", common, name(s.motion_engine), s.rife_model,
+                     name(s.motion_precision), s.rife_fused, s.experimental.rife_cuda_direct, s.drba_fused,
+                     s.pair_scale ? "half" : "full", s.upscale, name(s.span_order),
+                     after ? "warp-after" : "warp-before");
 }
 
 const StageMemory::Entry* StageMemory::find(ChainStage stage, std::string_view signature,

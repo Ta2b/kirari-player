@@ -16,7 +16,8 @@ namespace kirari::app::play {
 // mouvement entière.
 std::optional<bool> load_half_rife(Player& p, const gpu::BackendInit& init, ChainEngines& c,
                                    const PlaySettings& settings, InnerFallbacks& inner,
-                                   const std::string& library, const std::filesystem::path& models_dir) {
+                                   const std::string& library, const std::filesystem::path& models_dir,
+                                   bool cuda_direct) {
   if (!settings.pair_scale || !c.rife_motion || !c.rife_model) return true;
   const auto log = log_channel("app");
   const WorkSize half{.width = pair_scale_side(c.rife_size.width),
@@ -24,7 +25,8 @@ std::optional<bool> load_half_rife(Player& p, const gpu::BackendInit& init, Chai
   const kernels::RifeGeometry g = kernels::rife_geometry(half.width, half.height, c.rife_align);
   // C08-12 : refusé plus tôt dans la séance à cette taille, la construction (jusqu'à une minute) ne se refait
   // pas à chaque réouverture.
-  const std::string key = inner_key("rife-half", library, *c.rife_model, g.padded_width, g.padded_height);
+  const std::string key = inner_key(cuda_direct ? "rife-half-cuda" : "rife-half", library, *c.rife_model,
+                                    g.padded_width, g.padded_height);
   if (inner.refused(ChainStage::Motion, key) != nullptr) return true;
   std::optional<std::unique_ptr<gpu::Engine>> engine;
   if (c.rife_fused) {
@@ -33,6 +35,10 @@ std::optional<bool> load_half_rife(Player& p, const gpu::BackendInit& init, Chai
     if (fused) {
       if (!*fused) return std::nullopt;
       engine = std::move(**fused);
+    } else if (cuda_direct) {
+      log->warn("échelle par paire ignorée : {}", fused.error().detail);
+      inner.failed(ChainStage::Motion, key, fused.error());
+      return true;
     } else {
       log->warn("RIFE à demi-taille : fusionné indisponible ({}), RIFE entier", fused.error().detail);
     }

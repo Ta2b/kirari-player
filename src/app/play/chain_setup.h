@@ -245,7 +245,8 @@ std::expected<std::optional<ChainEngines>, Refusal> prepare_chain(Player& p, con
 // refus laisse la lecture à pleine taille (journal), retenu pour la séance dans inner (C08-12).
 std::optional<bool> load_half_rife(Player& p, const gpu::BackendInit& init, ChainEngines& c,
                                    const PlaySettings& settings, InnerFallbacks& inner,
-                                   const std::string& library, const std::filesystem::path& models_dir);
+                                   const std::string& library, const std::filesystem::path& models_dir,
+                                   bool cuda_direct);
 
 // GMFSS (chain_gmfss.cpp) : ce que settings demande (le mélange avec RIFE, ou GMFSS seul), puis ses deux
 // moteurs dans c, à c.rife_size pour le mélange (après load_rife), à c.work seul (avant). Rien si

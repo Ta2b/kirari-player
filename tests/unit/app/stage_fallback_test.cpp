@@ -179,6 +179,25 @@ TEST_CASE("Étages : l'interpolation refusée avec l'échelle par paire revient 
   CHECK(plan(full, memory)->settings.rife_factor == half.rife_factor);
 }
 
+TEST_CASE("Étages : un refus RIFE reste propre au mode de chargement", "[app][stages]") {
+  const PlaySettings regular = chain(PrecisionTier::Balanced, PrecisionTier::Balanced);
+  PlaySettings direct = regular;
+  direct.experimental.rife_cuda_direct = true;
+  StageMemory memory;
+  SECTION("le mode direct reste disponible après un refus du mode habituel") {
+    refuse(memory, ChainStage::Motion, regular);
+    const auto tried = plan(direct, memory);
+    REQUIRE(tried);
+    CHECK(tried->settings.rife_factor == direct.rife_factor);
+  }
+  SECTION("décocher le mode direct réessaie le mode habituel") {
+    refuse(memory, ChainStage::Motion, direct);
+    const auto tried = plan(regular, memory);
+    REQUIRE(tried);
+    CHECK(tried->settings.rife_factor == regular.rife_factor);
+  }
+}
+
 TEST_CASE("Étages : un refus vaut pour la séance, « Réessayer » l'oublie", "[app][stages]") {
   const PlaySettings wanted = chain(PrecisionTier::Balanced, PrecisionTier::Balanced);
   StageMemory memory;
