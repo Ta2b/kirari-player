@@ -369,6 +369,20 @@ Dans le lecteur avec SPAN Balanced FP16, le p95 GPU passe de 4,55–4,74 à
 4,52–4,66 ms pour 4.25 et de 4,65–4,67 à 4,51–4,58 ms pour Lite.
 Les huit passages confirment 165,00 nouvelles images/s en fenêtre Wayland.
 
+Sur RIFE 4.22 Lite CUDA direct à 1920 × 1088, Ada à 60 SM, la colle D2 partage
+les texels de ses quatre prises et la tête finale partage son entrée entre
+les quatre phases. Elle ne calcule que les 24 canaux couvrant les 20 canaux
+lus. Les sommes restent en FP32. Les six sorties image du banc sur les deux
+modèles conservent les 37 601 280 valeurs FP16 vérifiées bit à bit.
+
+Avec SPAN Balanced FP16 et la composition Wayland, le p95 GPU du Lite passe
+de 4,54–4,59 à 4,08–4,30 ms sur le premier extrait, et de 4,36–4,60 à
+4,17–4,19 ms sur le second. Wayland renvoie environ 165 et 158 nouvelles
+images/s sur les deux extraits, dans les deux modes. Un passage candidat
+du premier extrait a un abandon. Le gain reproductible porte sur le temps
+du réseau. Le 4.25 garde sa recette, les temps de son premier essai avec les
+deux noyaux se recouvrant avec ceux du témoin.
+
 L'essai complet :
 
 1. **quatre réseaux natifs**, du plus rapide au plus juste : sommes f16 ; f16 et tête f32 ; mixtes et tête f32 ;

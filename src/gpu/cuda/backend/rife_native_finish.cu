@@ -78,7 +78,8 @@ FinishLaunch by_slice(int kc) {
 }
 
 // Seulement 24 canaux, dont les 20 lus par le warp final.
-__device__ __forceinline__ void stage_head(const Frag<Acc::kF16> (&acc)[2][kHeadFragments], __half* output,
+template <Acc A>
+__device__ __forceinline__ void stage_head(const Frag<A> (&acc)[2][kHeadFragments], __half* output,
                                            const float* bias, int warp, int lane) {
   const int g = lane >> 2, t = lane & 3;
 #pragma unroll
@@ -97,7 +98,8 @@ __device__ __forceinline__ void stage_head(const Frag<Acc::kF16> (&acc)[2][kHead
   }
 }
 
-// RIFE Lite en 1080p : les quatre phases partagent l’entrée, gardée jusqu’au dernier warp.
+// Les quatre phases partagent l'entrée, gardée en mémoire partagée jusqu'à la dernière phase.
+template <Acc A>
 __global__ void __launch_bounds__(kThreads, 2) finish_four(Params p, FusedFinishParams f) {
   constexpr int kK = 32, kLd = kK + 8;
   constexpr int kRowsIn = kWarps + 2;
@@ -116,7 +118,7 @@ __global__ void __launch_bounds__(kThreads, 2) finish_four(Params p, FusedFinish
   for (int phase = 0; phase < 4; ++phase) {
     const int z = phase * p.tiles;
     const auto* weights = p.w + static_cast<long>(z) * 4 * 2 * 2 * 32 + lane;
-    Frag<Acc::kF16> acc[2][kHeadFragments];
+    Frag<A> acc[2][kHeadFragments];
 #pragma unroll
     for (int frag = 0; frag < 2; ++frag)
 #pragma unroll
@@ -147,17 +149,22 @@ __global__ void __launch_bounds__(kThreads, 2) finish_four(Params p, FusedFinish
     finish_tile<1, kHeadPitch>(output, p, f, y, x, phase);
   }
 }
+template <Acc A>
 void finish_four_phases(dim3 grid, int, cudaStream_t stream, const Params& p, const FusedFinishParams& f) {
   constexpr int kHeight = kWarps + 2;
   constexpr int kBytes = (kHeight * (kTW + 2) * (kCT + 8) + kWarps * kTW * kHeadPitch) * 2;
+  grid.y = static_cast<unsigned>((p.oh + kWarps - 1) / kWarps);
   grid.z = 1;
-  finish_four<<<grid, kThreads, kBytes, stream>>>(p, f);
+  finish_four<A><<<grid, kThreads, kBytes, stream>>>(p, f);
 }
 
 }  // namespace
 
 FinishLaunch pick_finish(RifeNativeSums sums, int kc, int rows, bool shared_phases) {
-  if (shared_phases && sums == RifeNativeSums::kF16 && kc == 32 && rows == 1) return finish_four_phases;
+  if (shared_phases && kc == 32) {
+    if (sums == RifeNativeSums::kF16 && rows == 1) return finish_four_phases<Acc::kF16>;
+    if (sums == RifeNativeSums::kF32 && rows == 2) return finish_four_phases<Acc::kF32>;
+  }
   switch (sums) {
     case RifeNativeSums::kF16:
       if (rows == 1) return by_slice<1, Acc::kF16>(kc);

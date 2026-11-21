@@ -237,6 +237,14 @@ Les huit résidus du dernier bloc prennent encore environ 302 µs sur chacun.
 [Référence Nsight Compute](https://docs.nvidia.com/nsight-compute/ProfilingGuide/#metrics-structure).
 Les chronos avec présentation sont donnés dans [RIFE natif](rife-natif.md).
 
+La tête partagée de RIFE 4.22 Lite CUDA direct à 1920 × 1088 retire un quart
+des produits de sa convolution transposée. Les huit canaux supprimés par
+phase représentent 1,070 GFLOP par interpolation sur la grille 480 × 272.
+La colle D2 conserve les produits Tensor et partage les lectures et calculs
+de ses prises bilinéaires. Le rapport de 48,6 % ci-dessus reste celui de la
+capture antérieure. Un nouveau profil de graphe est nécessaire pour comparer
+son trafic et sa durée au travail réduit.
+
 ### Gains à vérifier
 
 - Pour RIFE, le gain Tensor brut de Winograd 2D atteint 0,242 ms pour 4.25 et 0,254 ms pour Lite avec un

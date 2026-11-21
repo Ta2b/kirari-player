@@ -403,7 +403,7 @@ struct Narrow {
 
 // La tuile 16 × 4 conserve un seul fragment M16 par warp. Avec les calculs du warp et du flot dans
 // deux étapes, leur consommation de registres n'est plus simultanée.
-template <int K, bool Packed, bool Fixed = false, int D = 1>
+template <int K, bool Packed, bool Fixed = false, int D = 1, Acc A = Acc::kF16>
 __global__ void __launch_bounds__(kThreads, 2) glue_staged(Params p, FusedGlueParams g) {
   using N = Narrow;
   static_assert(D == 1 || D == 2);
@@ -429,7 +429,7 @@ __global__ void __launch_bounds__(kThreads, 2) glue_staged(Params p, FusedGluePa
              glue_span(D * N::kIR - 1, scale);
   }
   __syncthreads();
-  Frag<Acc::kF16> a[Rows][CT / 8];
+  Frag<A> a[Rows][CT / 8];
 #pragma unroll
   for (int row = 0; row < Rows; ++row)
 #pragma unroll
@@ -526,7 +526,7 @@ GlueLaunch by_tile(int ct) {
 
 // Les découpages de RIFE : 4.25 (8, 8, 4, 2, 1) et 4.22 lite (8, 4, 2, 1). Le dernier bloc après trois ou
 // quatre flots, l'avant-dernier à moitié après deux ou trois.
-template <int K, bool Fixed>
+template <int K, bool Fixed, Acc A = Acc::kF16>
 void d2_taps_one(dim3 grid, int smem, cudaStream_t stream, const Params& p, const FusedGlueParams& g) {
   if (g.encode_hwc4) {
     int halves = Narrow::kIR * Narrow::kIC * kLds;
@@ -536,10 +536,10 @@ void d2_taps_one(dim3 grid, int smem, cudaStream_t stream, const Params& p, cons
                 glue_span(2 * Narrow::kIR - 1, scale);
     }
     grid.x = static_cast<unsigned>((p.ow + Narrow::kWidth - 1) / Narrow::kWidth);
-    glue_staged<K, true, Fixed, 2><<<grid, kThreads, static_cast<std::size_t>(halves) * 2, stream>>>(p, g);
+    glue_staged<K, true, Fixed, 2, A><<<grid, kThreads, static_cast<std::size_t>(halves) * 2, stream>>>(p, g);
   } else {
     // En plans, la tuile large garde l'évaluation d'origine du flot.
-    glue_conv_kernel<K, 2, 32, Acc::kF16, true, false, true>
+    glue_conv_kernel<K, 2, 32, A, true, false, true>
         <<<grid, kThreads, static_cast<std::size_t>(smem), stream>>>(p, g);
   }
 }
@@ -577,6 +577,11 @@ GlueLaunch pick_glue(RifeNativeSums sums, int flows, int reduce, int ct) {
 GlueLaunch pick_d2_taps(std::span<const int> scales) {
   if (scales.size() == 2) return match_scales<3>(scales) ? d2_taps_one<2, true> : d2_taps_one<2, false>;
   if (scales.size() == 3) return match_scales<4>(scales) ? d2_taps_one<3, true> : d2_taps_one<3, false>;
+  return nullptr;
+}
+
+GlueLaunch pick_d2_lite32(std::span<const int> scales) {
+  if (scales.size() == 2 && match_scales<3>(scales)) return d2_taps_one<2, true, Acc::kF32>;
   return nullptr;
 }
 

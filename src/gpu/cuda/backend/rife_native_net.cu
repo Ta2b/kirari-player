@@ -46,8 +46,13 @@ struct Entry {
 
 class Net final : public RifeNativeNet {
  public:
-  Net(RifeNativePrecision precision, cudaStream_t loading, bool encoder = true, bool autotune = true)
-      : precision_(precision), loading_(loading), autotune_(autotune), first_block_(encoder ? 1 : 0) {
+  Net(RifeNativePrecision precision, cudaStream_t loading, bool encoder = true, bool autotune = true,
+      bool direct_lite_1080 = false)
+      : precision_(precision),
+        loading_(loading),
+        autotune_(autotune),
+        direct_lite_1080_(direct_lite_1080),
+        first_block_(encoder ? 1 : 0) {
     int device = 0;
     if (cudaGetDevice(&device) == cudaSuccess) {
       static_cast<void>(cudaDeviceGetAttribute(&sms_, cudaDevAttrMultiProcessorCount, device));
@@ -228,6 +233,17 @@ class Net final : public RifeNativeNet {
     return sent(to.upload(packed.data(), packed.size() * sizeof(std::uint32_t), loading_), error);
   }
 
+  rn::GlueLaunch d2_glue(const Layer& layer, std::span<const int> scales) const {
+    if (!ada_ || layer.cout != 32) return nullptr;
+    if (layer.sums == RifeNativeSums::kF16 &&
+        std::ranges::all_of(scales, [](int scale) { return scale % 4 == 0; }))
+      return rn::pick_d2_taps(scales);
+    if (direct_lite_1080_ && layer.sums == RifeNativeSums::kF32 && sms_ == 60 && layer.oh == 272 &&
+        layer.ow == 480)
+      return rn::pick_d2_lite32(scales);
+    return nullptr;
+  }
+
   // La première couche d'un bloc dont l'entrée se calcule à la volée (scales : les échelles des blocs
   // d'avant, vide sinon ; reduce : celle du bloc, 1 ou 2) : son noyau, s'il en est un pour ses sommes et ses
   // canaux (X de 28 canaux, 32 rangés ; une convolution de pas 2 sans résiduel, toute en une tuile), et ses
@@ -246,9 +262,8 @@ class Net final : public RifeNativeNet {
     layer.glue = rn::pick_glue(layer.sums, flows, reduce, layer.cout);
     if (layer.glue == nullptr) return true;
     // À demi-résolution, deux sorties voisines utilisent les mêmes quatre texels de chaque flot.
-    if (ada_ && reduce == 2 && layer.sums == RifeNativeSums::kF16 && layer.cout == 32 &&
-        std::ranges::all_of(scales, [](int scale) { return scale % 4 == 0; })) {
-      if (const auto reuse = rn::pick_d2_taps(scales)) layer.glue = reuse;
+    if (reduce == 2) {
+      if (const auto reuse = d2_glue(layer, scales)) layer.glue = reuse;
     }
     layer.glue_scales = scales;
     layer.glue_reduce = reduce;
@@ -281,7 +296,8 @@ class Net final : public RifeNativeNet {
   bool finish_layer(Layer& layer, const rn::Dense& dense, std::string& error) const {
     if (layer.kind != Kind::kPhase || layer.cfg.ksplit != 1 || layer.cout % 32 != 0 || layer.out_ld < 20)
       return true;
-    const bool shared_phases = ada_ && layer.cin == 32 && layer.ow == 480 && layer.oh == 272;
+    const bool shared_phases = ada_ && layer.cin == 32 && layer.ow == 480 && layer.oh == 272 &&
+                               (layer.sums == RifeNativeSums::kF16 || (direct_lite_1080_ && sms_ == 60));
     layer.finish = rn::pick_finish(layer.sums, layer.cfg.kc, layer.cfg.rows, shared_phases);
     if (layer.finish == nullptr) return true;
     layer.finish_tiles = layer.cout / 32;
@@ -460,6 +476,7 @@ class Net final : public RifeNativeNet {
   RifeNativePrecision precision_;
   cudaStream_t loading_;  // la voie du chargement : envois et banc
   bool autotune_;
+  bool direct_lite_1080_;
   int first_block_ = 1;
   int sms_ = 1;
   bool ada_ = false;
@@ -552,7 +569,9 @@ std::unique_ptr<RifeNativeNet> RifeNativeNet::create(const std::vector<RifeNativ
     error = "événements CUDA du réglage";
     return nullptr;
   }
-  auto net = std::make_unique<Net>(precision, stream, true, autotune);
+  const bool direct_lite_1080 =
+      !autotune && height == 1088 && width == 1920 && std::ranges::equal(reduce, std::array{8, 4, 2, 1});
+  auto net = std::make_unique<Net>(precision, stream, true, autotune, direct_lite_1080);
   const Entry image{.ih = height,
                     .iw = width,
                     .in_ld = 0,
