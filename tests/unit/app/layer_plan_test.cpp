@@ -170,12 +170,17 @@ TEST_CASE("calques : décisions d'une paire et suivi de la plaque", "[layers]") 
   CHECK_FALSE(layer_setup(c, &clock).layers);  // sans RIFE mouvement
   CHECK_FALSE(layer_setup(c, nullptr).layers);
 
-  // play.toml : un ancien fichier sans les clés prend calques et plaque (allumés par défaut) ; un fichier qui
-  // les a éteints les garde éteints.
+  // Un fichier sans les clés garde les calques par défaut. Un réglage explicite de la plaque est conservé.
   const auto old = parse_settings("[interpolation]\nsmooth_drawings = true\n");
   REQUIRE(old);
   CHECK(old->layers);
-  CHECK(old->background_plate);
+  CHECK_FALSE(old->background_plate);
+  const auto enabled = parse_settings("[interpolation]\nbackground_plate = true\n");
+  REQUIRE(enabled);
+  CHECK(enabled->background_plate);
+  const auto reloaded = parse_settings(format_settings(*enabled));
+  REQUIRE(reloaded);
+  CHECK(reloaded->background_plate);
   PlaySettings off;
   off.layers = false;
   off.background_plate = false;

@@ -43,16 +43,14 @@ class Bench {
              .onnx_path = dir_ / "modeles/modele.onnx",
              .sha256 = sha256_hex(onnx),
              .precision = precision};
-    config = {.trtexec = fake,
-              .cache_dir = dir_ / "moteurs",
-              .runtime = {.major = 11,
-                          .minor = 3,
-                          .patch = 0,
-                          .headers_build = 99,
-                          .cuda_runtime = 13000,
-                          .cuda_driver = 13000},
-              .device = {.name = "RTX de test", .sm_major = 8, .sm_minor = 9, .uuid = {}},
-              .timeout = 10s};
+    config.trtexec = fake;
+    config.cache_dir = dir_ / "moteurs";
+    config.runtime = {
+        .major = 11, .minor = 3, .headers_build = 99, .cuda_runtime = 13000, .cuda_driver = 13000};
+    config.device.name = "RTX de test";
+    config.device.sm_major = 8;
+    config.device.sm_minor = 9;
+    config.timeout = 10s;
   }
 
   // Ce que la construction de shapes produirait, calculé sans la lancer.

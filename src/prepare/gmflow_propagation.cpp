@@ -4,6 +4,8 @@
 #include <cmath>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "prepare/gmflow_attention.h"
 #include "prepare/gmflow_onnx_view.h"
@@ -42,12 +44,13 @@ std::expected<Projection, Refusal> read(const OnnxView& g, const std::string& na
       !std::ranges::all_of(b->floats, fp16))
     return bad("biais à 128 valeurs finies attendu");
 
-  Projection p{
-      .data = {.weights = {}, .bias = b->floats}, .input = mul->inputs[0], .output = add->outputs[0]};
-  p.data.weights.reserve(static_cast<std::size_t>(kD) * kD);
+  std::vector<float> weights;
+  weights.reserve(static_cast<std::size_t>(kD) * kD);
   for (std::size_t o = 0; o < kD; ++o)
-    for (std::size_t i = 0; i < kD; ++i) p.data.weights.push_back(w->floats[i * kD + o]);
-  return p;
+    for (std::size_t i = 0; i < kD; ++i) weights.push_back(w->floats[i * kD + o]);
+  return Projection{.data = {.weights = std::move(weights), .bias = b->floats},
+                    .input = mul->inputs[0],
+                    .output = add->outputs[0]};
 }
 
 }  // namespace

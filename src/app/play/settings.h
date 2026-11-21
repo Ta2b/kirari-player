@@ -278,10 +278,10 @@ struct PlaySettings {
   // Interpolation par calques (layer_stage.h, docs/calques.md) : là où la carte de la scène voit du décor qui
   // suit la caméra, l'image intermédiaire le reprend de a et b déplacées par la caméra au lieu du warp de
   // RIFE. Plaque de décor : chaque source reprend son décor de la sortie de SPAN d'une image clé par plan.
-  // Allumés par défaut depuis les essais du 19 novembre, ils ne tournent qu'avec la carte : sans elle (AMD,
-  // Intel, NVOF refusé, --no-scene-map) rien ne change. Rechargent la chaîne.
+  // Les calques démarrent actifs. La plaque est désactivée par défaut à cause des contours fantômes.
+  // Les deux demandent la carte de la scène et rechargent la chaîne.
   bool layers = true;
-  bool background_plate = true;
+  bool background_plate = false;
   // Échelle par paire (upscale_half.cpp) : une paire qui bouge fort, où RIFE passe à chaque instant, l'estime
   // sur une image deux fois plus petite que celle de RIFE, par un second moteur ; les autres paires ne
   // changent pas. Moins cher seulement, jamais plus grand. RIFE mouvement seulement. Essai, éteint par défaut

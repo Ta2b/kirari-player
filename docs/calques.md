@@ -2,10 +2,11 @@
 
 Phase 4 du plan du flux NVIDIA (« Usages du flux optique matériel NVIDIA »). Aucun modèle nouveau : RIFE et
 SPAN tels quels, plus un warp par le mouvement de caméra que donne la carte de la scène (`kernels/spec/scene_flow.h`,
-`PairFacts::scene`). Sans option de ligne de commande, les deux se règlent dans `play.toml` et sont allumés par
-défaut depuis les essais du 19 novembre (un `play.toml` qui les a éteints les garde éteints). Les deux ne tournent qu'avec la carte, allumée par défaut elle aussi depuis la première release (`--no-scene-map`,
-essai, l'éteint ; sans elle, une ligne au journal le dit). En lecture seulement : l'export rejoue la chaîne au bit près, et la carte
-arrive quand elle peut (`layer_setup`, `chain_layers.cpp`).
+`PairFacts::scene`). Les deux se règlent dans `play.toml`. Les calques sont allumés par défaut. Depuis la rc.7,
+la plaque est éteinte par défaut à cause des contours fantômes. Si `play.toml` contient déjà
+`background_plate = true`, passer sa valeur à `false` dans `[interpolation]` pour l'éteindre.
+Les deux dépendent de la carte de la scène, que `--no-scene-map` éteint. Ils tournent en lecture, où la carte
+arrive quand elle peut (`layer_setup`, `chain_layers.cpp`). L'export rejoue sa chaîne au bit près.
 
 ## Ce que ça fait
 
@@ -32,13 +33,13 @@ arrive quand elle peut (`layer_setup`, `chain_layers.cpp`).
   `--no-span-reuse` ne changent rien. Lecture probable : la clé du plan contenait un dessin à cet endroit, et la
   plaque recolle son décor décalé là où la source n'a plus ce dessin (un bout de main ou de contour immobile au
   moment de la clé, rangé dans le décor) ; la garde par pixel ne comparait que la luma, et un trait violet ou
-  rose a presque celle du ciel bleu qui l'a remplacé. **Correctif** : la garde de la plaque prend l'écart le
+  rose a presque celle du ciel bleu qui l'a remplacé. La garde RGB ajoutée ensuite prend l'écart le
   plus grand des trois canaux R, G, B (toujours 6 à 18 codes), dans la référence, le noyau CUDA et la spec
   (`kernels/spec/layers.h`, étape 4) ; la garde des calques à deux sources reste en luma. Un test reproduit un
   trait violet sur un ciel bleu de même luma (`tests/unit/kernels/layers_test.cpp`). À vérifier à 1:59 au PC de
   Tatoub avec un nouveau paquet TensorRT (le noyau change l'empreinte). Le masque de la clé atténue aussi
   la reprise aux frontières : la normalisation des sources annulait son opacité fractionnaire pour la
-  plaque, qui ne lit qu'une image.
+  plaque, qui ne lit qu'une image. Des fantômes restent observés avec la plaque active.
 
 Sans carte (AMD, Intel, Turing, NVOF refusé, pas encore relue), ou dès qu'elle doute de la paire (coupe, fondu,
 caméra non ajustée ou non affinée par Lucas-Kanade, résidu au-delà de 0,5 pixel de travail, moins de 5 % de
@@ -146,8 +147,8 @@ sur elle-même.
 
 Porte de la plaque passée : retard p95 de 0,0 ms plaque comme éteinte, aucune image sautée ni manquée ; les
 tuiles de SPAN calculent toujours environ 41 % des images ; 43 clés et 199 sources sur 200 reprises ; plaque
-0,48 ms médiane (p95 0,88 à 1,06). La plaque s'allume donc par défaut, la clé copiée de SPAN à toute
-précision : le second SPAN en FP16 est retiré.
+0,48 ms médiane (p95 0,88 à 1,06). Après cet essai, la plaque a été allumée par défaut, avec la clé copiée
+de SPAN à la précision de lecture. Le second SPAN en FP16 a été retiré.
 
 ## Essai (avec le reste, à la fin)
 
@@ -166,7 +167,7 @@ for v in eteint calques plaque; do
   for f in settings.toml user.toml play.toml; do [ -f "$D/$f" ] && cp "$D/$f" $E/$v/; done
   sed -i '/^layers = /d;/^background_plate = /d' $E/$v/play.toml
 done
-sed -i '/^\[interpolation\]/a layers = false\nbackground_plate = false' $E/eteint/play.toml  # allumés par défaut
+sed -i '/^\[interpolation\]/a layers = false\nbackground_plate = false' $E/eteint/play.toml
 sed -i '/^\[interpolation\]/a layers = true\nbackground_plate = false' $E/calques/play.toml
 sed -i '/^\[interpolation\]/a layers = true\nbackground_plate = true' $E/plaque/play.toml
 # RIFE mouvement ×2 (les calques ne composent que ses warps), 24 présentations de suite à 10 s.

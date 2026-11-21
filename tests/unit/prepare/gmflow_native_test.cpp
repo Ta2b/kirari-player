@@ -1,8 +1,8 @@
 // Le squelette CNN de GMFlow lu pour les noyaux natifs (prepare/gmflow_native.h) : un faux squelette aux
 // noms, opérateurs et attributs de la paire exportée (canaux réduits), lu et rangé, ses fautes refusées, le
 // plan et ses fautes, puis la vraie paire quand elle est là (KIRARI_RIFE_MODEL_DIR) : squelette, attention
-// (prepare/gmflow_attention_native.h) et MLP (prepare/gmflow_mlp.h), en un seul cas qui ne saute qu'une fois
-// sans elle (leurs faux sont dans gmflow_attention_test.cpp et gmflow_mlp_test.cpp).
+// (prepare/gmflow_attention_native.h), MLP (prepare/gmflow_mlp.h) et propagation, en un seul cas qui ne saute
+// qu'une fois sans elle (leurs faux sont dans gmflow_attention_test.cpp et gmflow_mlp_test.cpp).
 #include "prepare/gmflow_native.h"
 
 #include <array>
@@ -22,6 +22,7 @@
 #include "kernels/ref/half.h"
 #include "prepare/gmflow_attention_native.h"
 #include "prepare/gmflow_mlp.h"
+#include "prepare/gmflow_propagation.h"
 #include "prepare/model_source.h"
 #include "rife_fake.h"
 
@@ -334,6 +335,14 @@ TEST_CASE("GMFlow natif : le squelette, l'attention et le MLP de la paire export
   CHECK(std::abs(mlp->layers[0].epsilon - 1e-5F) < 1e-9F);
   CHECK(mlp->uses[0].source == "/flownet/transformer/layers.0/self_attn/Add_output_0");
   CHECK(mlp->uses[11].output == "/flownet/transformer/layers.5/cross_attn_ffn_1/Add_17_output_0");
+
+  const auto propagation = gmflow_propagation(*bytes);
+  INFO((propagation ? std::string() : propagation.error().detail));
+  REQUIRE(propagation);
+  CHECK(propagation->query.weights.size() == 128 * 128);
+  CHECK(propagation->query.bias.size() == 128);
+  CHECK(propagation->keys.weights.size() == 128 * 128);
+  CHECK(propagation->keys.bias.size() == 128);
 }
 
 }  // namespace kirari::prepare

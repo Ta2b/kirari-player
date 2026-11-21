@@ -227,7 +227,6 @@ std::expected<pid_t, int> spawn_child(const std::filesystem::path& program, char
   if (::pipe2(report.data(), O_CLOEXEC) != 0) return std::unexpected(errno);
   const Fd report_read(above_stdio(report[0]));
   Fd report_write(above_stdio(report[1]));
-  const char* dir = working_dir.empty() ? nullptr : working_dir.c_str();
   const pid_t parent = ::getpid();
   // vfork et non fork : le lecteur porte un contexte CUDA, Vulkan et plusieurs Gio d'adresses, dont fork
   // copierait les tables de pages (fautes copie-sur-écriture du thread de rendu jusqu'à l'exec, ENOMEM sous
@@ -235,7 +234,9 @@ std::expected<pid_t, int> spawn_child(const std::filesystem::path& program, char
   // rend jamais la main), ce qui est ce que vfork permet ; le parent reprend à l'exec (B05-08).
   const pid_t pid = ::vfork();  // NOLINT(bugprone-unsafe-functions) : choix expliqué ci-dessus
   if (pid < 0) return std::unexpected(errno);
-  if (pid == 0) exec_child(program.c_str(), argv, envp, dir, output, report_write.get(), parent);
+  if (pid == 0)
+    exec_child(program.c_str(), argv, envp, working_dir.empty() ? nullptr : working_dir.c_str(), output,
+               report_write.get(), parent);
   report_write.reset();
   // exec réussi : le tube se ferme (O_CLOEXEC) et read rend 0.
   int error = 0;
