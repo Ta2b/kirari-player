@@ -330,13 +330,6 @@ class Net final : public RifeNativeNet {
   bool tune(const Tuning& at, const RifeNativeConv& conv, const rn::Dense& dense, Layer& layer,
             std::string& error) const {
     const Config reference{.kc = 16, .ct = 16, .rows = rn::stride_of(layer.kind) == 2 ? 1 : 2, .ksplit = 1};
-    if (!autotune_) {
-      if (!shape(layer, reference)) {
-        error = "pas de forme de référence";
-        return false;
-      }
-      return upload_weights(layer.w, dense, reference.ct, error);
-    }
     const auto known = std::ranges::find_if(at.tuned, [&](const RifeNativeTuned& t) {
       return t.piece == at.piece && t.layer == at.layer && t.sums == layer.sums;
     });
@@ -349,6 +342,13 @@ class Net final : public RifeNativeNet {
                                                        .compact_encoder = known->compact_encoder,
                                                        .resident_residual = known->resident_residual}))
       return upload_weights(layer.w, dense, layer.cfg.ct, error);
+    if (!autotune_) {
+      if (!shape(layer, reference)) {
+        error = "pas de forme de référence";
+        return false;
+      }
+      return upload_weights(layer.w, dense, reference.ct, error);
+    }
     std::array<rn::Buffer, 3> packs;  // tuiles de 16, 32 et 64
     const auto packed = [&](int ct) -> const void* {
       rn::Buffer& pack = packs[ct == 16 ? 0 : ct == 32 ? 1 : 2];

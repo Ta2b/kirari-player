@@ -1,6 +1,7 @@
 #include "gpu/cuda/backend/rife_fused_engine.h"
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <optional>
 #include <utility>
@@ -23,6 +24,71 @@ cudaError_t set_l2_window(cudaStream_t stream, void* base, std::size_t bytes, st
   value.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
   value.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
   return cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow, &value);
+}
+
+// Relevé hors lecture sur RTX 4070 Ti à 1920×1088. Les choix contrôlent
+// seulement les tuiles et les tranches des sommes FP32.
+struct NativeTile {
+  int k = 16;
+  int n = 16;
+  int rows = 2;
+  int split = 1;
+};
+
+std::vector<RifeNativeTuned> native_preset(const RifeFusedKey& key) {
+  constexpr std::array<int, kernels::kFusedMaxBlocks> scale425{8, 8, 4, 2, 1};
+  constexpr std::array<int, kernels::kFusedMaxBlocks> scale422{8, 4, 2, 1, 0};
+  const bool lite = key.plan.blocks == 4 && key.plan.reduce == scale422;
+  if ((!lite && !(key.plan.blocks == 5 && key.plan.reduce == scale425)) || key.height != 1088 ||
+      key.width != 1920)
+    return {};
+
+  int device = 0;
+  cudaDeviceProp card{};
+  if (cudaGetDevice(&device) != cudaSuccess || cudaGetDeviceProperties(&card, device) != cudaSuccess ||
+      card.major != 8 || card.minor != 9 || card.multiProcessorCount != 60)
+    return {};
+
+  constexpr NativeTile ingress{32, 32, 1};
+  constexpr NativeTile wide{32, 32, 2};
+  using Block = std::array<NativeTile, 4>;  // entrée, réduction, résidus, tête
+  constexpr Block coarse{{{16, 32, 1}, ingress, {64, 16, 2}, {32, 16, 2}}};
+  constexpr Block previous{{ingress, ingress, wide, wide}};
+  constexpr std::array<Block, 5> full{{
+      coarse,
+      {{ingress, {32, 32, 1, 2}, {32, 32, 2, 3}, {32, 16, 2}}},
+      {{{32, 16, 1}, {16, 32, 1}, wide, wide}},
+      previous,
+      {{{16, 16, 1}, {16, 32, 1}, wide, wide}},
+  }};
+  constexpr std::array<Block, 4> light{{
+      coarse,
+      {{ingress, ingress, {32, 16, 2}, wide}},
+      previous,
+      {{{32, 16, 1}, {16, 32, 1}, wide, wide}},
+  }};
+
+  std::vector<RifeNativeTuned> tuned;
+  const auto use = [&](int piece, int layer, NativeTile tile, bool compact = false) {
+    tuned.push_back({.piece = piece,
+                     .layer = layer,
+                     .sums = RifeNativeSums::kF32,
+                     .kc = tile.k,
+                     .ct = tile.n,
+                     .rows = tile.rows,
+                     .ksplit = tile.split,
+                     .compact_encoder = compact});
+  };
+  use(0, 0, {16, 16, 1}, true);
+  use(0, 3, {16, 16, 1}, true);
+  for (int i = 0; i < key.plan.blocks; ++i) {
+    const auto& block = lite ? light[static_cast<std::size_t>(i)] : full[static_cast<std::size_t>(i)];
+    use(i + 1, 0, block[0]);
+    use(i + 1, 1, block[1]);
+    for (int layer = 2; layer < 10; ++layer) use(i + 1, layer, block[2]);
+    use(i + 1, 10, block[3]);
+  }
+  return tuned;
 }
 
 }  // namespace
@@ -110,7 +176,7 @@ std::expected<std::unique_ptr<RifeFusedEngine>, Refusal> RifeFusedEngine::load_n
 
   const std::vector<int> reduce(key.plan.reduce.begin(), key.plan.reduce.begin() + key.plan.blocks);
   constexpr RifeNativePrecision precision{RifeNativeSums::kF32, RifeNativeSums::kF32};
-  std::vector<RifeNativeTuned> tuned;
+  auto tuned = native_preset(key);
   std::string error;
   auto net = RifeNativeNet::create(pieces, reduce, key.height, key.width, precision, scratch.stream, tuned,
                                    error, false);

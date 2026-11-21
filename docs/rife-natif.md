@@ -333,10 +333,19 @@ Le backend NVIDIA reste chargé pour la chaîne vidéo et les autres modèles.
 
 Sur la RTX 4070 Ti en 1080p, avec des profils et caches vides, le chargement
 du moteur direct a pris environ 0,15–0,17 s après la préparation du manifeste.
-RIFE 4.25 et 4.22 Lite en sortie mouvement prennent 3,77 et 3,89 ms de
-médiane GPU avec les sommes FP32 et les formes fixes actuelles. Le lecteur
-confirme 165,00 images nouvelles/s sur le segment central en fenêtre
-Wayland, sans agrandissement. La sortie image de 4.25 a aussi été vérifiée.
+Pour cette taille sur Ada à 60 SM, le mode direct utilise des géométries
+mesurées hors lecture et conserve les sommes FP32. La médiane GPU de
+RIFE 4.25 passe de 3,67–3,87 à 3,07–3,11 ms et son p95 de 4,86–4,90 à
+4,19–4,26 ms. Pour le Lite, la médiane passe de 3,34–3,44 à 2,99–3,03 ms
+et le p95 de 4,61–4,63 à 4,04–4,08 ms. Les formes de référence restent
+disponibles pour les autres tailles et cartes.
+
+Sur trois paires réelles par modèle, l'écart maximal à la sortie image
+FP16 est de 0,00171 sur [0, 1], avec un PSNR de 83,2 dB au pire.
+En fenêtre Wayland avec SPAN Balanced FP16, le module final confirme 693
+images nouvelles à 165,00 i/s sur le segment central pour chacun des
+deux modèles. Les médianes GPU sont d'environ 3,17–3,18 ms pour RIFE
+et 8,27–8,28 ms pour SPAN dans ces passages.
 
 L'essai complet :
 
