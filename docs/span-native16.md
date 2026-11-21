@@ -500,6 +500,15 @@ Les deux variantes gardent tous les bits de chaque sortie RGB 4K testée sur les
 modèles, en bandes de 128 ou 127 lignes, avec masques et avec réemploi décalé. Les
 mesures ont été faites au banc CUDA et les deux variantes y restent.
 
+Deux essais de la dernière porte et concaténation gardent aussi les mêmes bits
+sur Balanced et Sharp1 Balanced, en dense et sur le banc de réemploi. Charger
+à l'avance les trois sources externes de la concaténation donne des temps
+variables. Transmettre la porte dans les registres retire une barrière et
+66,4 Mo logiques d'écritures et de lectures partagées. Les médianes denses
+restent à 8,441–8,442 ms pour Balanced et passent de 8,462 à 8,471 ms pour
+Sharp1 Balanced. Le banc compare chaque fois toute la sortie 4K et garde
+les deux variantes séparées du lecteur.
+
 Un dépouillement sur processeur des seize sorties ReLU de Balanced couvre deux
 images d'anime et deux recadrages 384×256 par image. Les cartes après ReLU contiennent
 47 à 49 % de zéros. Pour utiliser `mma.sp` sans supprimer de valeur, chaque groupe

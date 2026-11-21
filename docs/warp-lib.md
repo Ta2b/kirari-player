@@ -58,6 +58,20 @@ d'ensemble et l'écriture dans l'anneau. Il passera sur les briques communes qua
 Méthode reprise de la description publique de libaji (rassemblement à l'échelle du bloc, warp aux points
 d'échantillonnage, spécialisation par forme) ; aucune ligne de son code (sans licence).
 
+## Empreinte RVB du warp bilinéaire 4K
+
+Le warp exact peut calculer les voisins et les poids une seule fois pour ses
+trois plans couleur, puis écrire le ring par blocs de 32×8. Avec les deux
+images SPAN et le flot RIFE du banc, il conserve 33 177 600 codes de la
+surface pour chacun des quatre instants. La médiane passe de 500 à 446 µs.
+Avec deux flots DistilDRBA issus de vrais Y2, les mêmes pixels restent
+exacts et les médianes passent de 469 à 475 µs et de 447 à 469 µs.
+
+En fenêtre avec DistilDRBA et SPAN Performance, les médianes du warp sont
+de 0,460–0,461 ms pour le témoin et de 0,469 ms pour le candidat. Le
+compositeur confirme 693 nouvelles images dans chacun des quatre passages
+centraux, à 165,00 i/s. La variante 4K reste au banc.
+
 ## Tests
 
 - `kirari_backend_tensorrt_tests "[warp_lib]"` : un seul test, le warp générique contre une référence CPU en double

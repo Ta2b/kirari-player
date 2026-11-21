@@ -167,6 +167,26 @@ Rien n'est propre à 4.25 : les couches se lisent dans les morceaux ONNX de la d
 chaîne Conv, activation, Mul, Add, ConvTranspose), donc 4.22 lite, 4.26 et 4.25 lite (poids déjà permutés) passent
 par le même code. Une structure inconnue est refusée et TensorRT garde la chaîne.
 
+### Flot de D1 reconstruit dans la tête
+
+Une variante relit les quatre composantes du flot dans les sorties plus grossières.
+Elle retire l'écriture et la relecture du tampon HWC4, soit 33,42 Mo logiques à
+1920×1088. Elle conserve les Resize et additions FP16 dans leur ordre et laisse le
+tampon empoisonné au banc. Les cinq plans de mouvement et les sorties RGB
+bilinéaire et Catmull-Rom aux bords gardent tous leurs codes.
+
+La reconstruction sur les deux lancements coûte 11 µs de plus pour Lite et 10 µs
+pour 4.25 sans pression ajoutée. Avec 16 Mio lus entre les deux lancements, elle
+gagne respectivement 41 et 20 µs. Transposer les quatre composantes dans la tuile
+réduit encore la tête reconstruite de 6,9 et 4,1 µs au banc isolé.
+
+En lecture avec SPAN Balanced FP16, les quatre passages de chaque modèle gardent
+la même géométrie de colle et de tête par modèle. Les p50 du moteur Lite passent de
+2,011 ms aux deux témoins à 2,025 et 2,591 ms. SPAN ralentit lui aussi lors du second
+passage candidat. Pour 4.25, les p50 passent de 2,054–2,058 à 2,071–2,096 ms, et les
+p95 de 2,852–2,876 à 2,858–2,895 ms. Wayland confirme 692 à 694 images nouvelles
+dans chaque fenêtre centrale, à 165,00 i/s. La reconstruction reste au banc.
+
 ### Résiduel issu du halo en C32
 
 Le ResConv FP16 Ada à K32 et une ligne par warp réutilise le centre du halo chargé pour

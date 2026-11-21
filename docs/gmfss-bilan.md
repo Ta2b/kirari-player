@@ -255,6 +255,24 @@ de 96 à 64 par bloc, avec 48 Kio partagés au lieu de 40 et deux blocs résiden
 Sur B0 et B1, les médianes appariées se dégradent de 2,5 et 1,1 µs. Le MLP garde
 ses chargements actuels.
 
+### Réemploi de l'auto-attention de GMFlow au huitième
+
+Au premier bloc du 1/8, l'auto-attention d'une image dépend uniquement de
+ses jetons et de leur position. La variante garde la sortie B et la réemploie
+comme A lorsque le squelette confirme la continuité sur le même flux CUDA.
+Elle copie 540 Kio et lance les projections et l'attention pour le nouveau B.
+Les neuf tenseurs de la paire restent identiques sur trois triplets, y compris
+après interruption et après rejet d'un appel.
+
+Le banc isolé prépare les mêmes jetons hors mesure et compare aussi le témoin
+à lui-même. Après avoir ordonné l'envoi hôte et la préparation sur le même
+flux, les trois extraits retrouvent les mêmes 552 960 codes sur douze
+transitions. Les gains appariés sont de 15,86, 17,30 et 12,75 µs, pour un bruit
+témoin de 5,11, 0,75 et 0,63 µs. Une bascule d'emplacements sans copie
+gagne 14,02, 10,61 et 14,13 µs face au calcul complet. Elle nécessiterait
+de rétablir l'ordre du lot avant la corrélation globale. Le temps de la paire
+entière reste trop variable pour attribuer un gain au lecteur.
+
 ### Projections directes dans GridNet
 
 L'option « Projections GMFSS directes (essai) » dans Interpolation > Avancé, ou
