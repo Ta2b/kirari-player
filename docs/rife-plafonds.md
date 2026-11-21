@@ -180,6 +180,8 @@ octets d'une variante fusionnée pour recalculer son propre plafond.
 Un graphe RIFE 4.25 avec un nouvel encodage, à la même taille, a lu et écrit 451,13 Mo
 en DDR et transféré 2 516,07 Mo au L2. Pour ce trafic, la borne est de 0,916 ms. La capture
 numéro 5 606 dure 2,149 ms. Les durées de ces captures uniques varient avec l'état de la carte.
+Avec un nouvel encodage sur 4.22 Lite, le graphe nº 3 575 transfère 442,87 Mo en DDR
+et 2 588,52 Mo au L2. Sa borne de trafic est de 0,942 ms et sa durée profilée de 2,208 ms.
 
 ### Gains à vérifier
 

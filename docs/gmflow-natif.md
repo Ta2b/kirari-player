@@ -241,6 +241,12 @@ garde les 4 423 680 codes FP16 de chacune. Avec un second lancement dédié aux 
 passe d'une médiane de 62,4 µs à 69,5 µs. Les temps de B0 se recouvrent. Le gain de
 lectures partagées ne se traduit pas par un gain de temps reproductible dans ce banc.
 
+Une variante à lancement unique garde les mêmes codes sur B0 et B5. Sur B5 décalé,
+huit paires alternées après chauffe donnent un gain médian apparié de 3,94 µs. Huit
+paires témoin–témoin dans la même série donnent un écart absolu médian de 7,43 µs.
+L'effet total reste du même ordre que les variations du banc. Le lecteur conserve le
+noyau d'attention actuel.
+
 ```sh
 python3 tools/gmfss/gmflow_natif_couts.py --width 1920 --height 1152 --scale 0.5 \
   --plancher --reprise --winograd --rapide
