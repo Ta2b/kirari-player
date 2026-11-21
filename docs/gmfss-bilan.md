@@ -849,3 +849,10 @@ apparié, la fusion passe de 32,07 à 28,61 ms. Le lecteur traite 119 paires
 et 82 fusions contre 107 et 78 au témoin, mais la cadence confirmée passe
 de 32,17 à 29,74 i/s. Ces deux passages en régime saturé ne démontrent
 pas un gain de cadence. La sélection reste au banc.
+
+Quatre passages suivants en alternance A/B/B/A donnent 28,68 et 28,77
+nouvelles images/s en CT32, puis 30,23 et 32,21 avec la sélection CT64.
+La fusion GPU passe de 31,98–32,42 à 28,56–28,57 ms. Le p95 de
+l'intervalle de présentation reste autour de 72,7 ms. Le gain GPU se
+répète, tandis que le débit affiché dépend aussi du nombre de paires
+calculées en avance et du rattrapage d'horloge.

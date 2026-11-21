@@ -22,6 +22,11 @@ référence ONNX CPU. La compensation des poids transformés donne
 64,01–66,04 dB et porte les résidus à 124,39 µs. Le rendu de la chaîne
 reste à vérifier avant toute activation.
 
+Découper K en six tranches garde les opérandes FP16 et les sommes FP32,
+avec un ordre d'addition différent. Les huit résidus passent de 151,77 à
+87,67 µs lors de passages stables, mais le bloc entier reste à 135,03 µs
+contre 85,65 µs pour TensorRT. Cette variante reste au banc.
+
 La fusion du rangement de l'encodeur et de sa sortie après warp a donné
 24,05 à 13,01 µs au banc isolé, avec 24 675 840 valeurs identiques sur trois
 résolutions. La lecture appariée à ×2 avec SPAN Performance donne environ
