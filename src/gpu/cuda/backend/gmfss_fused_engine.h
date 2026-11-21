@@ -37,12 +37,17 @@ class GmfssFusedEngine final : public Engine {
   static std::expected<std::unique_ptr<GmfssFusedEngine>, Refusal> load(
       nvinfer1::IRuntime& runtime, const std::filesystem::path& cache_dir, const GmfssFusedKey& key,
       const std::shared_ptr<SharedActivations>& shared);
+  static std::expected<std::unique_ptr<GmfssFusedEngine>, Refusal> load_direct(
+      const prepare::GmfssGrid& grid, const std::array<RifeNativePiece, 4>& ifnet, int height, int width,
+      cudaStream_t stream, bool direct_splats);
   ~GmfssFusedEngine() override;
   GmfssFusedEngine(const GmfssFusedEngine&) = delete;
   GmfssFusedEngine& operator=(const GmfssFusedEngine&) = delete;
 
-  std::span<const std::string> input_names() const override { return full_->input_names(); }
-  std::span<const std::string> output_names() const override { return full_->output_names(); }
+  std::span<const std::string> input_names() const override;
+  std::span<const std::string> output_names() const override;
+  bool direct() const { return full_ == nullptr; }
+  bool direct_tail() const { return direct() && native_->tail_ready(); }
 
   // Les entrées dans l'ordre de input_names(), la sortie 1 × 3 × 2h × 2w.
   std::expected<void, Refusal> enqueue(cudaStream_t stream, const std::shared_ptr<SharedActivations>& shared,

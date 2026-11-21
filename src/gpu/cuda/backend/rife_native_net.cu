@@ -65,7 +65,7 @@ class Net final : public RifeNativeNet {
   }
 
   // Les couches d'un morceau, chacune réglée au banc ou reprise de tuned.
-  bool plan(const RifeNativePiece& piece, Entry at, rn::Bench& bench, std::vector<RifeNativeTuned>& tuned,
+  bool plan(const RifeNativePiece& piece, Entry at, rn::Bench* bench, std::vector<RifeNativeTuned>& tuned,
             std::string& error) {
     const int index = static_cast<int>(pieces_.size());
     std::vector<Layer> layers(piece.size());
@@ -323,7 +323,7 @@ class Net final : public RifeNativeNet {
 
   struct Tuning {
     int piece = 0, layer = 0;
-    rn::Bench& bench;
+    rn::Bench* bench;
     std::vector<RifeNativeTuned>& tuned;
   };
 
@@ -379,7 +379,7 @@ class Net final : public RifeNativeNet {
       return false;
     }
     const void* w = packed(16);
-    if (w == nullptr || !at.bench.reference(layer, w, error)) return false;
+    if (w == nullptr || !at.bench->reference(layer, w, error)) return false;
     const rn::Extent extent{
         .cin = layer.cin, .cout = layer.cout, .oh = layer.oh, .ow = layer.ow, .phases = layer.phases};
     auto configs = rn::configs(layer.sums, layer.kind, extent, sms_);
@@ -395,7 +395,7 @@ class Net final : public RifeNativeNet {
       if (!shape(layer, cfg)) continue;
       w = packed(cfg.ct);
       if (w == nullptr) return false;
-      const std::optional<rn::Bench::Timing> timed = at.bench.time(layer, w, error);
+      const std::optional<rn::Bench::Timing> timed = at.bench->time(layer, w, error);
       if (!timed) return false;
       if (timed->differs && !simplest) {
         ++layer.rejected;
@@ -410,7 +410,7 @@ class Net final : public RifeNativeNet {
       error = "aucun noyau ne fait la couche " + std::to_string(conv.cin) + "→" + std::to_string(conv.cout);
       return false;
     }
-    try_resident(at.bench, layer, packed(best.ct), fastest, best);
+    try_resident(*at.bench, layer, packed(best.ct), fastest, best);
     at.tuned.push_back({.piece = at.piece,
                         .layer = at.layer,
                         .sums = layer.sums,
@@ -493,19 +493,22 @@ class Net final : public RifeNativeNet {
 
 std::unique_ptr<RifeNativeNet> RifeNativeNet::create_ifnet(const std::array<RifeNativePiece, 4>& pieces,
                                                            int height, int width, cudaStream_t stream,
-                                                           std::string& error) {
+                                                           std::string& error, bool autotune) {
   // Deux convolutions de pas 2 par bloc, puis ConvTranspose de pas 2.
   if (height <= 0 || width <= 0 || height % 32 != 0 || width % 32 != 0) {
     error = "taille IFNet attendue : multiples de 32";
     return nullptr;
   }
-  rn::Bench bench(stream);
-  if (!bench.ready()) {
-    error = "événements CUDA du réglage IFNet";
-    return nullptr;
+  std::optional<rn::Bench> bench;
+  if (autotune) {
+    bench.emplace(stream);
+    if (!bench->ready()) {
+      error = "événements CUDA du réglage IFNet";
+      return nullptr;
+    }
   }
   const RifeNativePrecision precision{RifeNativeSums::kF32, RifeNativeSums::kF32};
-  auto net = std::make_unique<Net>(precision, stream, false);
+  auto net = std::make_unique<Net>(precision, stream, false, autotune);
   std::vector<RifeNativeTuned> tuned;
   for (std::size_t k = 0; k < pieces.size(); ++k) {
     const int d = kIfnetScales[k];
@@ -519,7 +522,7 @@ std::unique_ptr<RifeNativeNet> RifeNativeNet::create_ifnet(const std::array<Rife
                    .out_h = height / (2 * d),
                    .out_w = width / (2 * d),
                    .glue_scales = {}};
-    if (!net->plan(pieces[k], at, bench, tuned, error)) {
+    if (!net->plan(pieces[k], at, bench ? &*bench : nullptr, tuned, error)) {
       error = "bloc IFNet " + std::to_string(k) + " : " + error;
       return nullptr;
     }
@@ -550,7 +553,7 @@ std::unique_ptr<RifeNativeNet> RifeNativeNet::create_encode_tail(const RifeNativ
                     .encoder = true,
                     .glue_scales = {}};
   std::vector<RifeNativeTuned> tuned;
-  if (!net->plan(RifeNativePiece{tail}, input, bench, tuned, error)) return nullptr;
+  if (!net->plan(RifeNativePiece{tail}, input, &bench, tuned, error)) return nullptr;
   if (const cudaError_t result = cudaStreamSynchronize(stream); result != cudaSuccess) {
     error = cudaGetErrorString(result);
     return nullptr;
@@ -582,7 +585,7 @@ std::unique_ptr<RifeNativeNet> RifeNativeNet::create(const std::vector<RifeNativ
                     .out_w = width,
                     .encoder = true,
                     .glue_scales = {}};
-  if (!net->plan(pieces[0], image, bench, tuned, error)) {
+  if (!net->plan(pieces[0], image, &bench, tuned, error)) {
     error = "encodeur : " + error;
     return nullptr;
   }
@@ -603,7 +606,7 @@ std::unique_ptr<RifeNativeNet> RifeNativeNet::create(const std::vector<RifeNativ
       at.glue_scales.assign(reduce.begin(), reduce.begin() + static_cast<std::ptrdiff_t>(k));
       at.glue_reduce = d;
     }
-    if (!net->plan(pieces[k + 1], at, bench, tuned, error)) {
+    if (!net->plan(pieces[k + 1], at, &bench, tuned, error)) {
       error = "bloc " + std::to_string(k) + " : " + error;
       return nullptr;
     }

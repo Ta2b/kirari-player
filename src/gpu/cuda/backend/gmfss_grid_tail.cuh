@@ -15,7 +15,7 @@ static_assert((kRingRows & (kRingRows - 1)) == 0);
 
 // Chaque pixel de PixelShuffle est écrit une fois. La dernière convolution lit jusqu'à la
 // première ligne de la bande suivante, conservée dans l'anneau avec le halo du haut.
-template <int Kc>
+template <int Kc, rn::Acc Shuffle = rn::Acc::kF16>
 void enqueue(rn::Params first, const rn::Params& last, cudaStream_t stream, bool sum_f32 = true) {
   constexpr int shared_a = gmfss_shuffle_reuse::smem_bytes<1, true>();
   constexpr int shared_b = rn::smem_bytes(Kc, 16, 3, 1, 2);
@@ -28,7 +28,8 @@ void enqueue(rn::Params first, const rn::Params& last, cudaStream_t stream, bool
     if (need > produced) {
       first.oh = need;
       const dim3 blocks(groups(first.ow, rn::kTW), groups(need - produced, kInputTile), 2);
-      gmfss_shuffle_reuse::conv_shuffle_ring<<<blocks, rn::kThreads, shared_a, stream>>>(first, produced);
+      gmfss_shuffle_reuse::conv_shuffle_ring<Shuffle>
+          <<<blocks, rn::kThreads, shared_a, stream>>>(first, produced);
       produced = need;
     }
     const dim3 blocks(groups(last.ow, rn::kTW), groups(end - y, kOutputTile));

@@ -40,7 +40,8 @@ class GmfssPairNativeNet : public GmfssNativeParts {
   // sur stream pour les trois sommes, celles posées étant f32 partout. Rien et error rempli si une
   // convolution sort de ce que les noyaux font, ou sur une erreur CUDA (mémoire, banc).
   static std::unique_ptr<GmfssPairNativeNet> create(const prepare::GmfssPairNets& nets, int height, int width,
-                                                    cudaStream_t stream, std::string& error);
+                                                    cudaStream_t stream, std::string& error,
+                                                    bool autotune = true);
   // Le FeatureNet d'une image : trois plans FP16 de 2·height × 2·width (frames, ou frames + 3 plans pour la
   // seconde image).
   virtual cudaError_t features(cudaStream_t stream, const void* image,

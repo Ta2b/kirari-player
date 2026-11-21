@@ -31,6 +31,49 @@ namespace {
 constexpr double kGmfssPairFirstBuildS = 170.0;    // 179 s à 1280x768, ramenés à 1280x720
 constexpr double kGmfssFusionFirstBuildS = 220.0;  // à 640x384, sous kReferencePixels : telle quelle
 
+// En mode automatique, conserver le graphe entier si un manifeste ne se dérive pas.
+std::expected<void, Refusal> select_gmfss_manifests(GmfssModels& models, int height, int width,
+                                                    bool cuda_direct) {
+  const auto log = log_channel("app");
+  if (auto pair = prepare::derive_gmfss_pair(models.pair, models.pair, height, width))
+    models.pair = std::move(*pair);
+  else if (cuda_direct)
+    return std::unexpected(std::move(pair.error()));
+  else
+    log->warn("GMFSS natif : paire non coupée ({}), TensorRT la garde entière", pair.error().detail);
+  if (auto fusion = prepare::derive_gmfss_fused(models.fusion, height, width))
+    models.fusion = std::move(*fusion);
+  else if (cuda_direct)
+    return std::unexpected(std::move(fusion.error()));
+  else
+    log->warn("GMFSS natif : fusion non coupée ({}), TensorRT la garde entière", fusion.error().detail);
+  return {};
+}
+
+void configure_gmfss(ChainEngines& c, const PlaySettings& settings, const PlayOptions& options,
+                     const GmfssModels& chosen, WorkSize size, GmfssUse use) {
+  const auto log = log_channel("app");
+  c.gmfss_use = use;
+  // Très élevé par le mélange : chaque paire qui bouge (seuil 0).
+  c.gmfss_px =
+      settings.motion_engine == MotionEngine::Gmfss ? 0.0F : static_cast<float>(settings.gmfss_motion);
+  c.gmfss_half_loaded = !chosen.half_pair.empty() && chosen.pair == chosen.half_pair;
+  GmfssCost cost = gmfss_cost(size, c.gmfss_half_loaded);
+  if (const auto& budget = options.gmfss_budget) {
+    cost = {.total_us = budget->pair_us + budget->key_us, .pair_us = budget->pair_us};
+    log->info("GMFSS : budget d'essai paire {:.2f} ms et clé {:.2f} ms ({}×{})",
+              static_cast<double>(budget->pair_us) / 1000.0, static_cast<double>(budget->key_us) / 1000.0,
+              size.width, size.height);
+  }
+  c.gmfss_cost_us = cost.total_us;
+  c.gmfss_pair_us = cost.pair_us;
+  log->info("GMFSS union : {} en {}x{}",
+            use == GmfssUse::Only ? "à chaque instant"
+            : c.gmfss_px == 0.0F  ? "au milieu de chaque paire"
+                                  : "au milieu des paires fortes",
+            size.width, size.height);
+}
+
 }  // namespace
 
 GmfssCost gmfss_cost(WorkSize size, bool half) {
@@ -93,7 +136,9 @@ std::optional<bool> load_gmfss(Player& p, const gpu::BackendInit& init, ChainEng
   const GmfssModels& chosen = *usable;
   const WorkSize size = use == GmfssUse::Only ? c.work : c.rife_size;
   const kernels::RifeGeometry g = kernels::rife_geometry(size.width, size.height, kernels::kGmfssAlign);
-  const std::string key = inner_key("gmfss", library, chosen.pair, g.padded_width, g.padded_height);
+  const bool cuda_direct = settings.experimental.rife_cuda_direct;
+  const std::string key =
+      inner_key(cuda_direct ? "gmfss-cuda" : "gmfss", library, chosen.pair, g.padded_width, g.padded_height);
   if (inner.refused(ChainStage::Motion, key) != nullptr) {
     log->info("GMFSS union refusé plus tôt dans la séance : {}", without);
     return true;
@@ -114,57 +159,27 @@ std::optional<bool> load_gmfss(Player& p, const gpu::BackendInit& init, ChainEng
                                       .model = core::to_utf8(model.stem()),
                                       .width = static_cast<int>(shape.dims[3]),
                                       .height = static_cast<int>(shape.dims[2]),
-                                      .first_build_s = first_s,
+                                      .first_build_s = cuda_direct ? 1.0 : first_s,
                                       .tuned = false},
                           lane);
   };
-  // --gmfss-native : les manifestes de la paire et de la fusion coupées (prepare/gmfss_pair_split.h,
-  // prepare/gmfss_fused.h) ; un refus garde le graphe entier à TensorRT. La paire est FP16 : ses propres
-  // poids.
-  std::filesystem::path pair_model = fixed->pair;
-  std::filesystem::path fusion_model = fixed->fusion;
-  if (p.options.gmfss_native) {
-    const int h = g.padded_height / 2;
-    const int w = g.padded_width / 2;
-    if (auto manifest = prepare::derive_gmfss_pair(fixed->pair, fixed->pair, h, w))
-      pair_model = std::move(*manifest);
-    else
-      log->warn("GMFSS natif : paire non coupée ({}), TensorRT la garde entière", manifest.error().detail);
-    if (auto manifest = prepare::derive_gmfss_fused(fixed->fusion, h, w))
-      fusion_model = std::move(*manifest);
-    else
-      log->warn("GMFSS natif : fusion non coupée ({}), TensorRT la garde entière", manifest.error().detail);
+  if (cuda_direct || p.options.gmfss_native) {
+    if (auto manifests = select_gmfss_manifests(*fixed, g.padded_height / 2, g.padded_width / 2, cuda_direct);
+        !manifests)
+      return refused(manifests.error());
   }
   auto pair =
-      build(pair_model, gpu::Shape{.dims = {1, kernels::kGmfssFramePlanes, g.padded_height, g.padded_width}},
+      build(fixed->pair, gpu::Shape{.dims = {1, kernels::kGmfssFramePlanes, g.padded_height, g.padded_width}},
             i18n::tr("GMFSS (pair)"), gpu::Lane::Pair, kGmfssPairFirstBuildS);
   if (!pair) return refused(pair.error());
   if (!*pair) return std::nullopt;
-  auto fusion = build(fusion_model, gpu::Shape{.dims = {1, 3, g.padded_height / 2, g.padded_width / 2}},
+  auto fusion = build(fixed->fusion, gpu::Shape{.dims = {1, 3, g.padded_height / 2, g.padded_width / 2}},
                       i18n::tr("GMFSS (fusion)"), gpu::Lane::Interpolate, kGmfssFusionFirstBuildS);
   if (!fusion) return refused(fusion.error());
   if (!*fusion) return std::nullopt;
   c.gmfss_pair = std::move(**pair);
   c.gmfss_fusion = std::move(**fusion);
-  c.gmfss_use = use;
-  // Très élevé par le mélange : chaque paire qui bouge (seuil 0).
-  c.gmfss_px =
-      settings.motion_engine == MotionEngine::Gmfss ? 0.0F : static_cast<float>(settings.gmfss_motion);
-  c.gmfss_half_loaded = !chosen.half_pair.empty() && chosen.pair == chosen.half_pair;
-  GmfssCost cost = gmfss_cost(size, c.gmfss_half_loaded);
-  if (const auto& budget = p.options.gmfss_budget) {
-    cost = {.total_us = budget->pair_us + budget->key_us, .pair_us = budget->pair_us};
-    log->info("GMFSS : budget d'essai paire {:.2f} ms et clé {:.2f} ms ({}×{})",
-              static_cast<double>(budget->pair_us) / 1000.0, static_cast<double>(budget->key_us) / 1000.0,
-              size.width, size.height);
-  }
-  c.gmfss_cost_us = cost.total_us;
-  c.gmfss_pair_us = cost.pair_us;
-  log->info("GMFSS union : {} en {}x{}",
-            use == GmfssUse::Only ? "à chaque instant"
-            : c.gmfss_px == 0.0F  ? "au milieu de chaque paire"
-                                  : "au milieu des paires fortes",
-            size.width, size.height);
+  configure_gmfss(c, settings, p.options, chosen, size, use);
   return true;
 }
 

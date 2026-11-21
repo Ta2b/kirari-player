@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <format>
+#include <numeric>
 #include <string_view>
 #include <utility>
 
@@ -121,6 +122,40 @@ std::expected<std::unique_ptr<GmfssPairEngine>, Refusal> GmfssPairEngine::load(
   return engine;
 }
 
+std::expected<std::unique_ptr<GmfssPairEngine>, Refusal> GmfssPairEngine::load_direct(
+    std::span<const std::byte> pair, const prepare::GmfssPairNets& nets, int h, int w, cudaStream_t stream,
+    bool feature_reuse, bool fast) {
+  auto flow = GmflowPairFlowNet::create(pair, h, w, fast);
+  if (!flow) return std::unexpected(std::move(flow.error()));
+  std::string error;
+  auto net = GmfssPairNativeNet::create(nets, h, w, stream, error, false);
+  if (!net) return refuse(RefusalCode::FormatUnsupported, "Paire GMFSS CUDA : " + error);
+  auto engine = std::unique_ptr<GmfssPairEngine>(new GmfssPairEngine());
+  engine->height_ = h;
+  engine->width_ = w;
+  engine->native_ = std::move(net);
+  engine->gmflow_ = std::move(*flow);
+  engine->feature_reuse_ = feature_reuse;
+  std::iota(engine->at_.begin(), engine->at_.end(), std::size_t{0});
+  const auto bytes = static_cast<std::size_t>(prepare::kGmfssMetricPlanes) * static_cast<std::size_t>(h) *
+                     static_cast<std::size_t>(w) * sizeof(std::uint16_t);
+  if (auto ok = cuda_check(cudaMalloc(&engine->metric_in_, bytes), "GMFSS CUDA : entrée du MetricNet"); !ok)
+    return std::unexpected(std::move(ok.error()));
+  engine->native_->trim();
+  engine->native_on_ = true;
+  return engine;
+}
+
+std::span<const std::string> GmfssPairEngine::input_names() const {
+  static const std::array<std::string, 1> names{"frames"};
+  return full_ ? full_->input_names() : std::span<const std::string>(names);
+}
+
+std::span<const std::string> GmfssPairEngine::output_names() const {
+  static const std::vector<std::string> names(kOutputNames.begin(), kOutputNames.end());
+  return full_ ? full_->output_names() : std::span<const std::string>(names);
+}
+
 std::span<const Tensor> GmfssPairEngine::take_right_features() {
   if (!std::exchange(reuse_next_, false) || right_features_.front().handle == 0) return {};
   return right_features_;
@@ -166,8 +201,10 @@ std::expected<void, Refusal> GmfssPairEngine::enqueue_native(
   const auto matches = [](const Tensor& t, const Shape& shape) {
     return t.type == TensorType::F16 && t.shape == shape && t.handle != 0;
   };
-  bool good = matches(frames, full_->input_shape(0));
-  for (std::size_t i = 0; i < outputs.size(); ++i) good = good && matches(outputs[i], full_->output_shape(i));
+  const Shape frame_shape{.dims = {1, 2 * kImagePlanes, 2 * std::int64_t{height_}, 2 * std::int64_t{width_}}};
+  bool good = matches(frames, full_ ? full_->input_shape(0) : frame_shape);
+  for (std::size_t i = 0; i < outputs.size(); ++i)
+    good = good && matches(outputs[i], full_ ? full_->output_shape(i) : output_shape_of(i, height_, width_));
   if (!good) return refuse(RefusalCode::ShapeInvalid, "GMFSS natif : forme d'entrée ou de sortie");
   if (auto ok = enqueue_flow(stream, shared, frames, outputs, gmflow, !reuse.empty()); !ok) return ok;
   {

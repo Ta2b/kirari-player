@@ -14,10 +14,10 @@ constexpr int smem_bytes() {
   return in + (Ring ? 0 : out);
 }
 
-template <int Rows>
-__device__ __forceinline__ void store_ring(const rn::Frag<rn::Acc::kF16> (&acc)[Rows * 2][8],
-                                           const rn::Params& p, const float* phase_bias, int x0, int y0,
-                                           int warp, int lane, int phase) {
+template <int Rows, rn::Acc A>
+__device__ __forceinline__ void store_ring(const rn::Frag<A> (&acc)[Rows * 2][8], const rn::Params& p,
+                                           const float* phase_bias, int x0, int y0, int warp, int lane,
+                                           int phase) {
   constexpr int kChannels = 64;
   const int pixel = lane / 4, pair = lane % 4;
   const bool odd = (pair & 1) != 0;
@@ -57,7 +57,7 @@ __device__ __forceinline__ void store_ring(const rn::Frag<rn::Acc::kF16> (&acc)[
 template <int Rows, int Phases, rn::Acc A, bool Ring>
 __device__ __forceinline__ void shuffle(rn::Params p, int first_y, __half* input) {
   static_assert(Phases == 2 || Phases == 4);
-  static_assert(!Ring || A == rn::Acc::kF16);
+  static_assert(!Ring || A != rn::Acc::kMixed);
   using G = rn::Geometry<3, 1, Rows>;
   constexpr int kKc = 64, kCt = 64, kSteps = kKc / 16;
   auto* output = input + G::kIR * G::kIC * (kKc + 8);
@@ -83,7 +83,7 @@ __device__ __forceinline__ void shuffle(rn::Params p, int first_y, __half* input
     rn::accumulate<kKc, kCt, 3, 1, Rows, A, false>(acc, input, weights, 0, kSteps, 0, 9, warp, lane);
     const float* bias = p.bias + phase * kCt;
     if constexpr (Ring) {
-      store_ring<Rows>(acc, p, bias, x0, y0, warp, lane, phase);
+      store_ring<Rows, A>(acc, p, bias, x0, y0, warp, lane, phase);
     } else {
       rn::stage<kCt, Rows, A>(acc, output, bias, warp, lane);
       __syncthreads();
@@ -98,8 +98,9 @@ __global__ void __launch_bounds__(rn::kThreads, 2) conv_shuffle(rn::Params p) {
   shuffle<Rows, Phases, A, false>(p, 0, reinterpret_cast<__half*>(shared));
 }
 
+template <rn::Acc A>
 static __global__ void __launch_bounds__(rn::kThreads, 2) conv_shuffle_ring(rn::Params p, int first_y) {
   extern __shared__ __align__(16) unsigned char shared[];
-  shuffle<1, 2, rn::Acc::kF16, true>(p, first_y, reinterpret_cast<__half*>(shared));
+  shuffle<1, 2, A, true>(p, first_y, reinterpret_cast<__half*>(shared));
 }
 }  // namespace kirari::gpu::cuda::gmfss_shuffle_reuse

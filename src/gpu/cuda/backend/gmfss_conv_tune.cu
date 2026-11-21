@@ -27,6 +27,33 @@ namespace {
 
 using rn::Kind;
 
+template <int Kc, int KH, int Step, rn::In Input, rn::Out Output>
+void launch(dim3 blocks, int smem, cudaStream_t stream, const rn::Params& p) {
+  rn::conv_kernel<Kc, 64, KH, Step, 1, Input, Output, rn::Acc::kF32>
+      <<<blocks, rn::kThreads, static_cast<std::size_t>(smem), stream>>>(p);
+}
+
+rn::Launch pick_fixed64(rn::Kind kind, int kc, bool blocked8) {
+  if (blocked8) {
+    return kind == rn::Kind::kSame && kc == 16 ? launch<16, 3, 1, rn::In::kBlocked8, rn::Out::kNhwc>
+                                               : nullptr;
+  }
+  switch (kind) {
+    case rn::Kind::kSame:
+      return kc == 16 ? launch<16, 3, 1, rn::In::kNhwc, rn::Out::kNhwc> : nullptr;
+    case rn::Kind::kHalf:
+      return kc == 16 ? launch<16, 3, 2, rn::In::kNhwc, rn::Out::kNhwc> : nullptr;
+    case rn::Kind::kPhase:
+      return kc == 16 ? launch<16, 2, 1, rn::In::kNhwc, rn::Out::kPhase> : nullptr;
+    case rn::Kind::kShuffle:
+      return kc == 64 ? launch<64, 3, 1, rn::In::kNhwc, rn::Out::kPhase> : nullptr;
+    case rn::Kind::kImage:
+    case rn::Kind::kPlanes4:
+      return nullptr;
+  }
+  return nullptr;
+}
+
 bool direct_ring_shape(const Shape& shape) {
   const rn::Config& c = shape.cfg;
   return c.kc == 64 && c.ct == 64 && (c.rows == 1 || c.rows == 2) && c.ksplit == 1 && c.bands == 0 &&
@@ -108,11 +135,14 @@ Rows band_of(const Layer& layer, const std::vector<rn::Config>& configs) {
 // La forme cfg d'une convolution pour des sommes, sur oh lignes de sortie : lancement, grille, mémoire
 // partagée. En flux, les colonnes de blocs de la couche entière (cfg.bands bandes au plus chacune) : sur la
 // bande du banc, plus courtes mais aussi nombreuses, au même nombre de blocs que la couche entière.
-Shape shape_for(const Layer& layer, RifeNativeSums sums, const rn::Config& cfg, int oh) {
+Shape shape_for(const Layer& layer, RifeNativeSums sums, const rn::Config& cfg, int oh,
+                bool fixed64 = false) {
   Shape s;
   s.cfg = cfg;
   const bool stream = cfg.bands > 0;
-  if (layer.blocked8)
+  if (fixed64)
+    s.launch = pick_fixed64(layer.kind, cfg.kc, layer.blocked8);
+  else if (layer.blocked8)
     s.launch = rn::pick_blocked8(sums, cfg);
   else
     s.launch = stream ? rn::pick_stream(sums, layer.kind, cfg)
@@ -215,12 +245,12 @@ bool tune_shuffle(const Tuner& tuner, const Layer& layer, Rows band, Shape& best
   const auto shot = [&](const Shape& shape) {
     return shot_of(layer, band, shape, sums, layer.packs[pack_index(shape.cfg.ct)].as<const void>(), true);
   };
-  if (!tuner.bench.reference(shot(direct), error)) return false;
+  if (!tuner.bench->reference(shot(direct), error)) return false;
   Shape grouped;
   grouped.ms = std::numeric_limits<float>::infinity();
   for (const Shape& candidate : candidates) {
     if (candidate.launch == nullptr) continue;
-    const auto timed = tuner.bench.time(shot(candidate), error);
+    const auto timed = tuner.bench->time(shot(candidate), error);
     if (!timed) return false;
     ++tuner.tuning.measured;
     if (timed->differs) {
@@ -286,15 +316,15 @@ bool tune_up192(const Tuner& tuner, const Layer& layer, Rows band, Shape& best, 
   grouped.smem = up::kSmem;
   const auto* weights = layer.packs[pack_index(up::kCT)].as<const void>();
   const auto shot = [&](const Shape& shape) { return shot_of(layer, band, shape, f16, weights, true); };
-  if (!tuner.bench.reference(shot(direct), error)) return false;
-  const auto dense = tuner.bench.time(shot(direct), error);
+  if (!tuner.bench->reference(shot(direct), error)) return false;
+  const auto dense = tuner.bench->time(shot(direct), error);
   if (!dense) return false;
   ++tuner.tuning.measured;
   if (dense->differs || !std::isfinite(dense->ms)) {
     best.stream = "transposée groupée non essayée, témoin dense instable";
     return true;
   }
-  const auto timed = tuner.bench.time(shot(grouped), error);
+  const auto timed = tuner.bench->time(shot(grouped), error);
   if (!timed) return false;
   ++tuner.tuning.measured;
   if (timed->differs) {
@@ -324,10 +354,39 @@ bool tune_up192(const Tuner& tuner, const Layer& layer, Rows band, Shape& best, 
 
 }  // namespace
 
+bool ConvNet::tune_fixed(std::uint64_t wide_mask, std::size_t s, Layer& layer, std::string& error) {
+  const RifeNativeSums sums = kSums[s];
+  // La forme de référence de chaque genre, sans découper K ni mesurer le GPU.
+  rn::Config cfg{.kc = layer.kind == Kind::kShuffle ? 64 : 16,
+                 .ct = 16,
+                 .rows = rn::stride_of(layer.kind) == 2 ? 1 : 2,
+                 .ksplit = 1};
+  Shape& best = layer.shapes[s];
+  if (wide_mask != 0 && sums == RifeNativeSums::kF32 && layer.cout % 32 == 0) {
+    const auto index = static_cast<std::size_t>(&layer - layers_.data());
+    if (layer.cout % 64 == 0 && ((wide_mask >> index) & 1U) != 0) {
+      auto wide = cfg;
+      wide.ct = 64;
+      wide.rows = 1;
+      best = shape_for(layer, sums, wide, layer.oh, true);
+      if (layer.cin % wide.kc == 0 && best.launch != nullptr && best.smem <= 48 * 1024) return true;
+    }
+    auto wide = cfg;
+    wide.ct = 32;
+    best = shape_for(layer, sums, wide, layer.oh);
+    if (layer.cin % wide.kc == 0 && best.launch != nullptr && best.smem <= 48 * 1024) return true;
+  }
+  best = shape_for(layer, sums, cfg, layer.oh);
+  if (layer.cin % cfg.kc == 0 && layer.cout % cfg.ct == 0 && best.launch != nullptr) return true;
+  error = std::string("aucune forme fixe en sommes ") + rn::sums_name(sums);
+  return false;
+}
+
 // La forme de la convolution pour les sommes kSums[s] : la seule possible, sinon la plus rapide au banc (sur
 // la bande de band_of) parmi celles qui rendent la sortie de la forme de référence.
 bool ConvNet::tune(const Tuner& tuner, std::size_t s, Layer& layer, std::string& error) {
   const RifeNativeSums sums = kSums[s];
+  if (tuner.bench == nullptr) return tune_fixed(tuner.fixed_large_mask, s, layer, error);
   const rn::Extent extent{
       .cin = layer.cin, .cout = layer.cout, .oh = layer.oh, .ow = layer.ow, .phases = layer.phases};
   std::vector<rn::Config> configs = rn::configs(sums, layer.kind, extent, sms_);
@@ -349,7 +408,7 @@ bool ConvNet::tune(const Tuner& tuner, std::size_t s, Layer& layer, std::string&
   };
   const Rows band = band_of(layer, configs);
   const Shape first = shape_for(layer, sums, *reference, band.oh);
-  if (!tuner.bench.reference(shot_of(layer, band, first, sums, weights(*reference)), error)) return false;
+  if (!tuner.bench->reference(shot_of(layer, band, first, sums, weights(*reference)), error)) return false;
   best.ms = std::numeric_limits<float>::infinity();
   int rejected = 0;
   float tiled = best.ms, streamed = best.ms;
@@ -357,7 +416,7 @@ bool ConvNet::tune(const Tuner& tuner, std::size_t s, Layer& layer, std::string&
   for (const rn::Config& cfg : configs) {
     const Shape shape = shape_for(layer, sums, cfg, band.oh);
     const std::optional<rn::Bench::Timing> timed =
-        tuner.bench.time(shot_of(layer, band, shape, sums, weights(cfg)), error);
+        tuner.bench->time(shot_of(layer, band, shape, sums, weights(cfg)), error);
     if (!timed) return false;
     ++tuner.tuning.measured;
     if (timed->differs && &cfg != reference) {

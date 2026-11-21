@@ -70,7 +70,8 @@ class RifeNativeNet {
                                                            cudaStream_t stream, std::string& error);
   // L'IFNet de GMFSS utilise les mêmes convolutions, sans encodeur ni colle RIFE.
   static std::unique_ptr<RifeNativeNet> create_ifnet(const std::array<RifeNativePiece, 4>& pieces, int height,
-                                                     int width, cudaStream_t stream, std::string& error);
+                                                     int width, cudaStream_t stream, std::string& error,
+                                                     bool autotune = true);
   // La zone de travail (activations entre les couches) : octets, et son adresse pour les appels suivants.
   virtual std::int64_t workspace_bytes() const = 0;
   // L'encodeur sur trois plans vers quatre canaux, en plans ou groupés par pixel.

@@ -114,7 +114,7 @@ bool shuffle_ring_source(const Layer& layer) {
   const auto& c = layer.shape().cfg;
   return layer.kind == Kind::kShuffle && layer.cin == 64 && layer.in_ld == 64 && layer.cout == 64 &&
          layer.out_ld == 64 && layer.phases == 4 && layer.in_slope == 1.F && !layer.activation &&
-         layer.skip < 0 && layer.sums == RifeNativeSums::kF16 && c.kc == 64 && c.ksplit == 1 &&
+         layer.skip < 0 && c.kc == 64 && c.ksplit == 1 &&
          layer.packs[pack_index(64)].as<const void>() != nullptr;
 }
 
@@ -257,6 +257,21 @@ ConvNet::ConvNet(int height, int width) : height_(height), width_(width) {
   sms_ = std::max(sms_, 1);
 }
 
+Tuner ConvNet::select_plan(const prepare::GmfssGrid& grid, const Io& io, const Tuner& tuner) {
+  const char* tail = std::getenv("KIRARI_AB_GMFSS_GRID_TAIL");  // env: banc
+  Tuner plan = tuner;
+  // GridNet Union 1080p sur Ada 60 SM. Un bit désigne une couche où CT64/R1
+  // a battu CT32 avec les mêmes sommes FP32. Les autres restent en CT32.
+  const bool ada = io.rgb >= 0 && on_ada();
+  if (tuner.bench == nullptr && ada && sms_ == 60 && io.features_c8 && grid.steps.size() == 45 &&
+      height_ == 576 && width_ == 960)
+    plan.fixed_large_mask = 0xbfffc17d3bcULL;
+  try_tail_ = ada && width_ <= 960 && height_ >= gmfss_grid_tail::kRingRows &&
+              (tuner.bench != nullptr || plan.fixed_large_mask != 0) &&
+              (tail == nullptr || std::string_view(tail) != "0");
+  return plan;
+}
+
 bool ConvNet::plan(const prepare::GmfssGrid& grid, const Io& io, std::span<const int> pieces,
                    const Tuner& tuner, std::string& error) {
   if (grid.steps.empty() || (!pieces.empty() && pieces.size() != grid.steps.size())) {
@@ -273,16 +288,14 @@ bool ConvNet::plan(const prepare::GmfssGrid& grid, const Io& io, std::span<const
   folded_weights_.release();
   folded_edges_.release();
   folded_bias_.release();
-  const char* tail = std::getenv("KIRARI_AB_GMFSS_GRID_TAIL");  // env: banc
-  try_tail_ = io.rgb >= 0 && width_ <= 960 && height_ >= gmfss_grid_tail::kRingRows &&
-              (tail == nullptr || std::string_view(tail) != "0") && on_ada();
+  const Tuner plan = select_plan(grid, io, tuner);
   place(grid, io);
   layers_ = std::vector<Layer>(grid.steps.size());
   for (std::size_t i = 0; i < grid.steps.size(); ++i) {
     Layer& layer = layers_[i];
     layer.piece = pieces.empty() ? 0 : pieces[i];
     layer.head = std::ranges::find(io.kept, grid.steps[i].to) != io.kept.end();
-    if (!layout(grid.steps[i], io, layer, error) || !build(grid.steps[i], tuner, layer, error)) {
+    if (!layout(grid.steps[i], io, layer, error) || !build(grid.steps[i], plan, layer, error)) {
       error = "convolution " + std::to_string(i) + " : " + error;
       return false;
     }
@@ -290,6 +303,8 @@ bool ConvNet::plan(const prepare::GmfssGrid& grid, const Io& io, std::span<const
     layer.rgb = layer.rgb && i + 1 == grid.steps.size();
     record_tuning(layer, i, tuner.tuning.notes);
   }
+  tuner.tuning.layers += static_cast<int>(layers_.size());
+  if (tuner.bench == nullptr) return true;
   static const bool try_ring = [] {
     const char* value = std::getenv("KIRARI_AB_GMFSS_GRID_RING");  // env: banc
     return value != nullptr && std::string_view(value) == "1";
@@ -302,9 +317,7 @@ bool ConvNet::plan(const prepare::GmfssGrid& grid, const Io& io, std::span<const
     const auto bytes = std::int64_t{gmfss_grid_join::kWorkspaceRows} * width_ * 64 * 2;
     plan_join_rings(bytes, tuner);
   }
-  if (!plan_folded_tail(grid, try_join, tuner, error)) return false;
-  tuner.tuning.layers += static_cast<int>(layers_.size());
-  return true;
+  return plan_folded_tail(grid, try_join, tuner, error);
 }
 
 bool ConvNet::folded_tail_fits(const prepare::GmfssGridConv& first, std::size_t index) const {
@@ -393,11 +406,24 @@ const char* ConvNet::planar_ring_blocker() const {
   return nullptr;
 }
 
+bool ConvNet::fp32_tail_shape(const Layer& first, const Layer& last) const {
+  // try_tail_ filtre déjà l'architecture Ada. Le producteur FP32 est qualifié sur 60 SM,
+  // le GridNet Union 576×960 et les mêmes formes que le plan fixe CT64 → RGB.
+  const auto& producer = first.shape().cfg;
+  const auto& consumer = last.shape().cfg;
+  return first.sums == RifeNativeSums::kF32 && last.sums == RifeNativeSums::kF32 && sms_ == 60 &&
+         height_ == 576 && width_ == 960 && layers_.size() == 45 && first.ih == height_ &&
+         first.iw == width_ && first.oh == height_ && first.ow == width_ && producer.ct == 64 &&
+         producer.rows == 1 && !producer.ahead && producer.bands == 0 && consumer.kc == 16 &&
+         consumer.rows == 2;
+}
+
 bool ConvNet::tail_ready() const {
   if (!try_tail_ || layers_.size() < 2) return false;
   const std::size_t i = layers_.size() - 2;
   const Layer& first = layers_[i];
   const Layer& last = layers_[i + 1];
+  if (first.sums != RifeNativeSums::kF16 && !fp32_tail_shape(first, last)) return false;
   const Placed& scratch = tensor(first.to);
   const auto bytes =
       std::int64_t{gmfss_grid_tail::kRingRows} * last.iw * 64 * static_cast<std::int64_t>(sizeof(__half));
@@ -434,6 +460,7 @@ void ConvNet::use(std::span<const RifeNativePrecision> precisions) {
     const RifeNativePrecision& p = precisions[static_cast<std::size_t>(layer.piece)];
     layer.sums = layer.head ? p.head : p.body;
   }
+  if (tail_on_ && !tail_ready()) tail_on_ = false;
 }
 
 void ConvNet::trim() {
@@ -490,16 +517,21 @@ bool ConvNet::run(cudaStream_t stream, void* zone, float* partial, std::span<con
       shuffle.w = layer.packs[pack_index(64)].as<const uint4>();
       shuffle.tiles = 1;
       const bool sum_f32 = head.sums == RifeNativeSums::kF32;
-      switch (head.shape().cfg.kc) {
-        case 16:
-          gmfss_grid_tail::enqueue<16>(shuffle, q, stream, sum_f32);
-          break;
-        case 32:
-          gmfss_grid_tail::enqueue<32>(shuffle, q, stream, sum_f32);
-          break;
-        case 64:
-          gmfss_grid_tail::enqueue<64>(shuffle, q, stream, sum_f32);
-          break;
+      if (layer.sums == RifeNativeSums::kF32) {
+        // tail_ready exige ici le plan RGB FP32 K16.
+        gmfss_grid_tail::enqueue<16, rn::Acc::kF32>(shuffle, q, stream);
+      } else {
+        switch (head.shape().cfg.kc) {
+          case 16:
+            gmfss_grid_tail::enqueue<16>(shuffle, q, stream, sum_f32);
+            break;
+          case 32:
+            gmfss_grid_tail::enqueue<32>(shuffle, q, stream, sum_f32);
+            break;
+          case 64:
+            gmfss_grid_tail::enqueue<64>(shuffle, q, stream, sum_f32);
+            break;
+        }
       }
       written = true;
     } else if (piece == -1 && join_on_ && joins_at(i)) {
@@ -700,13 +732,16 @@ bool ConvNet::build(const prepare::GmfssGridStep& step, const Tuner& tuner, Laye
   if (!sent(layer.bias.upload(dense.bias.data(), dense.bias.size() * sizeof(float), tuner.stream)))
     return false;
   for (const int ct : {16, 32, 64}) {
-    if (layer.cout % ct != 0) continue;
+    const auto index = static_cast<std::size_t>(&layer - layers_.data());
+    const bool wide =
+        tuner.fixed_large_mask != 0 && (ct == 32 || ((tuner.fixed_large_mask >> index) & 1U) != 0);
+    if (layer.cout % ct != 0 || (tuner.bench == nullptr && ct != 16 && !wide)) continue;
     const std::vector<std::uint32_t> packed = rn::packed_weights(dense, ct);
     if (!sent(layer.packs[pack_index(ct)].upload(packed.data(), packed.size() * sizeof(std::uint32_t),
                                                  tuner.stream)))
       return false;
   }
-  if (const Layer* same = twin(layer); same != nullptr) {
+  if (const Layer* same = tuner.fixed_large_mask == 0 ? twin(layer) : nullptr; same != nullptr) {
     layer.shapes = same->shapes;
     for (Shape& shape : layer.shapes) {
       shape.rejected = 0;

@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -241,18 +242,24 @@ class Net final : public GmfssNativeNet {
 
 std::unique_ptr<GmfssNativeNet> GmfssNativeNet::create(const prepare::GmfssGrid& grid, int height, int width,
                                                        cudaStream_t stream, std::string& error,
-                                                       bool features_c8) {
+                                                       bool features_c8, bool autotune) {
   if (height < 32 || width < 32 || height % 32 != 0 || width % 32 != 0) {
     error = "taille de la fusion : des multiples de 32 attendus";
     return nullptr;
   }
-  gmfss_plan::rn::Bench bench(stream);
-  if (!bench.ready()) {
-    error = "événements CUDA du réglage";
-    return nullptr;
+  std::optional<gmfss_plan::rn::Bench> bench;
+  if (autotune) {
+    bench.emplace(stream);
+    if (!bench->ready()) {
+      error = "événements CUDA du réglage";
+      return nullptr;
+    }
   }
   auto net = std::make_unique<Net>(height, width, features_c8);
-  if (!net->plan(grid, gmfss_plan::Tuner{.bench = bench, .stream = stream, .tuning = net->tuning()}, error))
+  if (!net->plan(
+          grid,
+          gmfss_plan::Tuner{.bench = bench ? &*bench : nullptr, .stream = stream, .tuning = net->tuning()},
+          error))
     return nullptr;
   // Les envois sur stream finis avant qu'une autre voie (la lecture) lance le réseau.
   if (const cudaError_t result = cudaStreamSynchronize(stream); result != cudaSuccess) {

@@ -3,8 +3,10 @@
 GMFSS Fortuna Union ([`interpolation.md`](interpolation.md)) sur la RTX 4070 Ti. Le GridNet (45 convolutions),
 FeatureNet, MetricNet et l'IFNet d'Union tournent par nos noyaux CUDA sur les formes retenues lors de la
 reprise du 20 novembre. L'essai au chargement juge la paire, la fusion, l'IFNet et GMFlow contre les moteurs
-TensorRT correspondants. GMFlow a une chaîne CUDA complète qui doit encore franchir ce contrôle de fidélité.
-`--no-gmfss-native` laisse GMFSS à TensorRT et le retire du menu. Les mesures de reprise et les anciennes
+TensorRT correspondants. GMFlow a une chaîne CUDA complète qui doit encore franchir ce contrôle de fidélité
+pour le mode automatique.
+`--no-gmfss-native` choisit la voie TensorRT historique et retire GMFSS du menu. Une demande explicite de
+CUDA direct peut encore charger GMFSS depuis la ligne de commande. Les mesures de reprise et les anciennes
 estimations sont dans [`gmfss-bilan.md`](gmfss-bilan.md).
 
 Le chantier s'est fait par étapes, chacune derrière `--gmfss-native` :
@@ -16,6 +18,34 @@ Le chantier s'est fait par étapes, chacune derrière `--gmfss-native` :
 5. **GMFSS union de retour au menu**, seulement derrière le natif (ce document) ;
 6. GMFlow natif, s'il égale TensorRT FP16 en qualité et en vitesse (GMFlow n'a pas de FP8) ; sinon TensorRT
    reste.
+
+## CUDA direct sur demande
+
+La case « RIFE et GMFSS CUDA direct (essai) » réemploie la clé `experimental.rife_cuda_direct` de `play.toml`.
+Elle ouvre les poids des deux manifestes GMFSS et charge FeatureNet, GMFlow, MetricNet, IFNet et GridNet
+avec des plans fixes. Aucun moteur TensorRT de GMFSS n'est construit, désérialisé ou comparé pendant ce
+chargement. Le backend Nvidia reste fourni par le module commun qui utilise aussi TensorRT en mode
+automatique. Un refus du modèle direct suit le repli habituel de la chaîne, avec RIFE CUDA direct s'il
+est employé.
+
+Avec les projections directes actives, la fusion 576 × 960 sur Ada 60 SM charge les plans CT32 et CT64
+qui ont conservé les codes FP16 du GridNet strict. La dernière convolution et le PixelShuffle
+échangent leur résultat arrondi FP16 via un anneau, avec sommes FP32 des deux côtés. Le plan vérifie
+la forme et la durée de vie du tampon avant de choisir cet anneau. Il suit son plan dense si les
+conditions ne sont pas réunies.
+
+Deux passages 1080p sur la RTX 4070 Ti, en fenêtre Wayland et cache vierge, ont chargé la paire et
+la fusion en 311–321 et 312–316 ms respectivement après dérivation des modèles. Le journal
+confirme l'anneau FP32 et aucun plan TensorRT n'est créé. La fusion GPU mesure 27,88–27,91 ms
+en médiane. Wayland présente 26,46–28,61 nouvelles images/s pour une source à 48 i/s et une demande ×2,
+sans image abandonnée par le compositeur dans la fenêtre mesurée. Ces passages vérifient le
+chargement et la cadence du chemin natif complet.
+
+Sur les deux paires réelles recadrées en 1920 × 1080, le rendu des mêmes noyaux à t = 0,5 donne
+52,15 et 74,13 dB face à la référence ONNX Runtime CPU. Les 8 709 120 codes des six mouvements
+et de leurs métriques reproduisent le prototype CUDA strict. La scène au mouvement prononcé conserve
+un écart RVB maximal local de 0,159 et 42 pixels qui dépassent 0,10. Cette mesure garde le
+mode direct sur demande.
 
 ## Le GridNet de la fusion
 

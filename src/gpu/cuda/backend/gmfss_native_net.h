@@ -35,7 +35,7 @@ class GmfssNativeNet : public GmfssNativeParts {
   // une convolution sort de ce que les noyaux font, ou sur une erreur CUDA (mémoire, banc).
   static std::unique_ptr<GmfssNativeNet> create(const prepare::GmfssGrid& grid, int height, int width,
                                                 cudaStream_t stream, std::string& error,
-                                                bool features_c8 = false);
+                                                bool features_c8 = false, bool autotune = true);
   // Le réseau sur stream : out reçoit 3 plans FP16 de 2·height × 2·width.
   virtual cudaError_t run(cudaStream_t stream, const GmfssNativeInputs& in, void* out) const = 0;
   // x1 à x3, avec les canaux de A puis B dans chaque pixel.

@@ -101,9 +101,10 @@ struct Io {
 
 // Le banc du réglage et sa voie, où partent aussi les poids ; tuning : le compte, que le plan complète.
 struct Tuner {
-  rn::Bench& bench;
+  rn::Bench* bench = nullptr;
   cudaStream_t stream = nullptr;
   GmfssTuning& tuning;
+  std::uint64_t fixed_large_mask = 0;
 };
 
 // Les lignes lancées : toutes celles de la couche, ou au banc une bande de ses premières lignes de sortie, et
@@ -153,7 +154,7 @@ class ConvNet {
   bool tail_ready() const;
   bool folded_tail_ready() const { return folded_weights_.as<const void>() != nullptr; }
   void use_folded_tail(bool enabled) { folded_tail_on_ = enabled && folded_tail_ready(); }
-  void use_tail(bool enabled) { tail_on_ = enabled; }
+  void use_tail(bool enabled) { tail_on_ = enabled && tail_ready(); }
   // Au chargement seulement, stream vidé entre les deux placements.
   void use_join(bool enabled);
   // Les sommes de chaque convolution : celles de son morceau (precisions[morceau]), la tête à part.
@@ -170,6 +171,9 @@ class ConvNet {
            const std::array<const __half*, 3>* planar_head = nullptr) const;
 
  private:
+  Tuner select_plan(const prepare::GmfssGrid& grid, const Io& io, const Tuner& tuner);
+  bool fp32_tail_shape(const Layer& first, const Layer& last) const;
+  bool tune_fixed(std::uint64_t wide_mask, std::size_t s, Layer& layer, std::string& error);
   void lifetimes(const prepare::GmfssGrid& grid, const Io& io);
   void place(const prepare::GmfssGrid& grid, const Io& io);
   const char* planar_ring_blocker() const;

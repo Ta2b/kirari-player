@@ -9,7 +9,8 @@ class GmfssIfnetNative {
  public:
   virtual ~GmfssIfnetNative() = default;
   static std::unique_ptr<GmfssIfnetNative> create(const std::array<RifeNativePiece, 4>& pieces, int height,
-                                                  int width, cudaStream_t stream, std::string& error);
+                                                  int width, cudaStream_t stream, std::string& error,
+                                                  bool autotune = true);
   virtual cudaError_t run(cudaStream_t stream, const void* a, const void* b, const void* time,
                           void* out) const = 0;
 };

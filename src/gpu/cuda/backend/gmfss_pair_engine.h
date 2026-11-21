@@ -39,12 +39,16 @@ class GmfssPairEngine final : public Engine {
   static std::expected<std::unique_ptr<GmfssPairEngine>, Refusal> load(
       nvinfer1::IRuntime& runtime, const std::filesystem::path& cache_dir, const GmfssFusedKey& key,
       const prepare::GmfssPairCut& cut, const std::shared_ptr<SharedActivations>& shared, bool feature_reuse);
+  static std::expected<std::unique_ptr<GmfssPairEngine>, Refusal> load_direct(
+      std::span<const std::byte> pair, const prepare::GmfssPairNets& nets, int height, int width,
+      cudaStream_t stream, bool feature_reuse, bool fast);
   ~GmfssPairEngine() override;
   GmfssPairEngine(const GmfssPairEngine&) = delete;
   GmfssPairEngine& operator=(const GmfssPairEngine&) = delete;
 
-  std::span<const std::string> input_names() const override { return full_->input_names(); }
-  std::span<const std::string> output_names() const override { return full_->output_names(); }
+  std::span<const std::string> input_names() const override;
+  std::span<const std::string> output_names() const override;
+  bool direct() const { return full_ == nullptr; }
   bool next_gmfss_pair(bool follows) override {
     reuse_next_ = follows && feature_reuse_ && native_on_ && right_features_.front().handle != 0;
     return reuse_next_;

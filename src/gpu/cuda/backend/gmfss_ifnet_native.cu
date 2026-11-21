@@ -213,8 +213,8 @@ class Ifnet final : public GmfssIfnetNative {
 
 std::unique_ptr<GmfssIfnetNative> GmfssIfnetNative::create(const std::array<RifeNativePiece, 4>& pieces,
                                                            int height, int width, cudaStream_t stream,
-                                                           std::string& error) {
-  auto net = RifeNativeNet::create_ifnet(pieces, height, width, stream, error);
+                                                           std::string& error, bool autotune) {
+  auto net = RifeNativeNet::create_ifnet(pieces, height, width, stream, error, autotune);
   if (!net) return nullptr;
   auto ifnet = std::make_unique<Ifnet>(std::move(net), height, width);
   if (const cudaError_t result = ifnet->allocate(); result != cudaSuccess) {

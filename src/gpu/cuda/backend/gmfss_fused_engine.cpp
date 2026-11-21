@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <format>
+#include <numeric>
 #include <string_view>
 #include <utility>
 
@@ -106,6 +107,42 @@ std::expected<std::unique_ptr<GmfssFusedEngine>, Refusal> GmfssFusedEngine::load
   return engine;
 }
 
+std::expected<std::unique_ptr<GmfssFusedEngine>, Refusal> GmfssFusedEngine::load_direct(
+    const prepare::GmfssGrid& grid, const std::array<RifeNativePiece, 4>& ifnet, int h, int w,
+    cudaStream_t stream, bool direct_splats) {
+  std::string error;
+  auto native_ifnet = GmfssIfnetNative::create(ifnet, h, w, stream, error, false);
+  if (!native_ifnet) return refuse(RefusalCode::FormatUnsupported, "IFNet GMFSS CUDA : " + error);
+  auto native = GmfssNativeNet::create(grid, h, w, stream, error, direct_splats, false);
+  if (!native) return refuse(RefusalCode::FormatUnsupported, "GridNet GMFSS CUDA : " + error);
+  auto engine = std::unique_ptr<GmfssFusedEngine>(new GmfssFusedEngine());
+  engine->height_ = h;
+  engine->width_ = w;
+  engine->native_ifnet_ = std::move(native_ifnet);
+  engine->native_ = std::move(native);
+  engine->direct_splats_ = direct_splats;
+  engine->features_c8_ = direct_splats;
+  engine->native_->use_tail(true);
+  std::iota(engine->at_.begin(), engine->at_.end(), std::size_t{0});
+  const auto bytes =
+      std::size_t{3} * static_cast<std::size_t>(h) * static_cast<std::size_t>(w) * sizeof(std::uint16_t);
+  if (auto ok = cuda_check(cudaMalloc(&engine->rife_, bytes), "GMFSS CUDA : image IFNet"); !ok)
+    return std::unexpected(std::move(ok.error()));
+  engine->native_->trim();
+  engine->native_on_ = true;
+  return engine;
+}
+
+std::span<const std::string> GmfssFusedEngine::input_names() const {
+  static const std::vector<std::string> names(kNames.begin(), kNames.end());
+  return full_ ? full_->input_names() : std::span<const std::string>(names);
+}
+
+std::span<const std::string> GmfssFusedEngine::output_names() const {
+  static const std::array<std::string, 1> names{"out"};
+  return full_ ? full_->output_names() : std::span<const std::string>(names);
+}
+
 std::expected<void, Refusal> GmfssFusedEngine::enqueue(cudaStream_t stream,
                                                        const std::shared_ptr<SharedActivations>& shared,
                                                        std::span<const Tensor> inputs,
@@ -129,7 +166,8 @@ std::optional<std::array<GmfssFusedEngine::SplatTarget, 6>> GmfssFusedEngine::pa
     for (std::size_t l = 0; l < planes.size(); ++l) {
       const auto at = at_[kW01 + s * planes.size() + l];
       Tensor warped = inputs[at];
-      if (warped.type != TensorType::F16 || warped.handle == 0 || !(warped.shape == full_->input_shape(at)))
+      const Shape wanted = full_ ? full_->input_shape(at) : expected_shape(at, height_, width_);
+      if (warped.type != TensorType::F16 || warped.handle == 0 || !(warped.shape == wanted))
         return std::nullopt;
       if (l == 0) {
         constexpr std::uint64_t kRgbBytes = 3U * sizeof(std::uint16_t);
@@ -155,8 +193,10 @@ std::expected<void, Refusal> GmfssFusedEngine::enqueue_native(
   const auto matches = [](const Tensor& t, const Shape& shape) {
     return t.type == TensorType::F16 && t.shape == shape && t.handle != 0;
   };
-  bool good = matches(out, full_->output_shape(0));
-  for (std::size_t i = 0; i < inputs.size(); ++i) good = good && matches(inputs[i], full_->input_shape(i));
+  const Shape rendered{.dims = {1, 3, 2 * std::int64_t{height_}, 2 * std::int64_t{width_}}};
+  bool good = matches(out, full_ ? full_->output_shape(0) : rendered);
+  for (std::size_t i = 0; i < inputs.size(); ++i)
+    good = good && matches(inputs[i], full_ ? full_->input_shape(i) : expected_shape(i, height_, width_));
   if (!good) return refuse(RefusalCode::ShapeInvalid, "GMFSS natif : forme d'entrée ou de sortie");
   if (auto ok = enqueue_ifnet(stream, shared, inputs, native_ifnet_ != nullptr); !ok) return ok;
   GmfssNativeInputs in;

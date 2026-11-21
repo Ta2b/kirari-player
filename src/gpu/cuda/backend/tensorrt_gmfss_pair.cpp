@@ -5,14 +5,18 @@
 // Tout refus du natif laisse la paire à TensorRT.
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <string_view>
 #include <utility>
 
 #include "core/utf8_path.h"
+#include "gpu/cuda/backend/cuda_status.h"
 #include "gpu/cuda/backend/gmfss_pair_engine.h"
+#include "gpu/cuda/backend/gmfss_trial.h"
 #include "gpu/cuda/backend/tensorrt_backend.h"
 #include "prepare/gmfss_fused.h"
 #include "prepare/gmfss_pair_native.h"
@@ -20,6 +24,8 @@
 
 namespace kirari::gpu::cuda {
 namespace {
+
+constexpr char kGmfssCudaTag[] = "cuda-fixe-v1";
 
 std::expected<prepare::GmfssPairManifest, Refusal> read_manifest(const std::filesystem::path& path) {
   std::ifstream file(path, std::ios::binary);
@@ -47,6 +53,10 @@ std::expected<Artifact, Refusal> TensorRtBackend::build_gmfss_pair(const ModelSp
                               shape_text(shapes)));
   // La paire entière comme le lecteur la construit sans le natif (sans pavage L2 ni niveau 5) : la même clé,
   // le moteur déjà construit est repris ; le flot de même.
+  if (rife_cuda_direct_) {
+    const GmfssFusedKey direct{.height = h, .width = w, .engines = {kGmfssCudaTag, model.sha256}};
+    return Artifact{.cache_key = gmfss_pair_artifact_key(direct), .path = model.onnx_path};
+  }
   auto engines = build_gmfss_pieces(model.onnx_path.parent_path(), manifest->pieces, manifest->digests,
                                     expected, false, progress);
   if (!engines) return std::unexpected(std::move(engines.error()));
@@ -59,6 +69,28 @@ std::expected<std::unique_ptr<Engine>, Refusal> TensorRtBackend::load_gmfss_pair
   if (!key) return refuse(RefusalCode::GraphInvalid, "GMFSS natif : clé d'artefact illisible");
   auto manifest = read_manifest(artifact.path);
   if (!manifest) return std::unexpected(std::move(manifest.error()));
+  if (key->engines[0] == kGmfssCudaTag) {
+    const auto started = std::chrono::steady_clock::now();
+    if (key->height != manifest->height || key->width != manifest->width)
+      return refuse(RefusalCode::ShapeInvalid, "Paire GMFSS CUDA : taille de l'artefact incohérente");
+    auto bytes =
+        prepare::read_gmfss_piece(artifact.path.parent_path(), manifest->pieces[0], manifest->digests[0]);
+    if (!bytes) return std::unexpected(std::move(bytes.error()));
+    auto nets = prepare::gmfss_pair_nets(*bytes);
+    if (!nets) return std::unexpected(std::move(nets.error()));
+    gmfss_trial::Scratch loading;
+    if (auto ok = cuda_check(cudaStreamCreateWithFlags(&loading.stream, cudaStreamNonBlocking),
+                             "Paire GMFSS CUDA : voie de chargement");
+        !ok)
+      return std::unexpected(std::move(ok.error()));
+    auto direct = GmfssPairEngine::load_direct(*bytes, *nets, manifest->height, manifest->width,
+                                               loading.stream, gmfss_feature_reuse_, gmflow_fast_);
+    if (!direct) return std::unexpected(std::move(direct.error()));
+    const auto ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    log(BackendLogLevel::Info, std::format("GMFSS CUDA direct : paire, {:.3f} ms", ms));
+    return std::unique_ptr<Engine>(std::move(*direct));
+  }
   auto engine =
       GmfssPairEngine::load(*runtime_, cache_dir_, *key, manifest->cut, arena(), gmfss_feature_reuse_);
   if (!engine) return std::unexpected(std::move(engine.error()));
@@ -111,7 +143,9 @@ std::expected<void, Refusal> TensorRtBackend::enqueue_gmfss_pair(GmfssPairEngine
   }
   if (auto ok = order_engine(&engine, ordered, written, false); !ok) return ok;
   const Shape shape = inputs.empty() ? Shape{} : inputs[0].shape;
-  const char* mode = !engine.native() ? "TensorRT" : (reuse.empty() ? "native" : "native, A reprise");
+  const char* mode = engine.direct()    ? (reuse.empty() ? "CUDA direct" : "CUDA direct, A reprise")
+                     : !engine.native() ? "TensorRT"
+                                        : (reuse.empty() ? "native" : "native, A reprise");
   const char* access = aliased ? " sans copie" : "";
   GpuTiming& timing = stage_named("GMFSS paire {}{} {}×{}", mode, access, shape.dims[3], shape.dims[2]);
   role(Role::Interpolation).begin(stream_);

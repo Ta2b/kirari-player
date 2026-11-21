@@ -639,14 +639,15 @@ void motion_advanced(PlaySettings& d, const SettingsChoices& choices, bool expor
                         "uses TensorRT for that block."),
                panel::Apply::Reload);
   }
+  if (choices.tensor_cores && choices.engine_in_use == core::EngineId::TensorRt &&
+      (d.motion_engine == MotionEngine::Rife || gmfss)) {
+    ImGui::Checkbox(i18n::tr("Direct CUDA RIFE and GMFSS (test)"), &d.experimental.rife_cuda_direct);
+    panel::tip(i18n::tr("Direct CUDA RIFE and GMFSS (test)"),
+               i18n::tr("Loads compatible RIFE and GMFSS models directly into CUDA kernels. "
+                        "Skips building and comparing TensorRT plans for these models."),
+               panel::Apply::Reload);
+  }
   if (choices.tensor_cores && d.motion_engine == MotionEngine::Rife) {
-    if (choices.engine_in_use == core::EngineId::TensorRt) {
-      ImGui::Checkbox(i18n::tr("Direct CUDA RIFE (test)"), &d.experimental.rife_cuda_direct);
-      panel::tip(i18n::tr("Direct CUDA RIFE (test)"),
-                 i18n::tr("Loads compatible RIFE models directly into CUDA kernels with FP32 accumulation. "
-                          "Skips building and comparing TensorRT plans for RIFE."),
-                 panel::Apply::Reload);
-    }
     ImGui::Checkbox(i18n::tr("Packed 4K RIFE warp (test)"), &d.experimental.packed_warp);
     panel::tip(i18n::tr("Packed 4K RIFE warp (test)"),
                i18n::tr("Speeds up cubic 4K warping with RIFE at ×3 and above on RTX 40 GPUs. "
