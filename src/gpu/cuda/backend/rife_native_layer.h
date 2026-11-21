@@ -126,11 +126,13 @@ inline bool can_stream(const Layer& layer) {
 
 inline bool can_reside(const Layer& layer, const Config& cfg) {
   const int channels = layer.cin;
-  return layer.kind == Kind::kSame && layer.sums == RifeNativeSums::kF16 && layer.residual &&
-         layer.activation && channels == 32 && layer.cout == channels && layer.in_ld == channels &&
-         layer.out_ld == channels && layer.out_ch == channels && layer.phases == 1 && layer.ih == layer.oh &&
-         layer.iw == layer.ow && cfg.kc == 32 && cfg.ct == channels && cfg.rows == 1 && cfg.ksplit == 1 &&
-         !cfg.ahead && cfg.bands == 0 && !cfg.compact_encoder;
+  const bool sums_fit = (layer.sums == RifeNativeSums::kF16 && cfg.rows == 1) ||
+                        (layer.sums == RifeNativeSums::kF32 && cfg.rows == 2);
+  return layer.kind == Kind::kSame && sums_fit && layer.residual && layer.activation && channels == 32 &&
+         layer.cout == channels && layer.in_ld == channels && layer.out_ld == channels &&
+         layer.out_ch == channels && layer.phases == 1 && layer.ih == layer.oh && layer.iw == layer.ow &&
+         cfg.kc == 32 && cfg.ct == channels && cfg.ksplit == 1 && !cfg.ahead && cfg.bands == 0 &&
+         !cfg.compact_encoder;
 }
 
 // La forme cfg pour cette couche : lancement, grille, mémoire partagée ; faux si aucun noyau ne la fait.
@@ -138,7 +140,7 @@ inline bool shape(Layer& layer, const Config& cfg) {
   const bool stream = cfg.bands > 0;
   if (stream && !can_stream(layer)) return false;
   if (cfg.resident_residual && !can_reside(layer, cfg)) return false;
-  const Launch launch = cfg.resident_residual ? pick_resident_residual()
+  const Launch launch = cfg.resident_residual ? pick_resident_residual(layer.sums)
                         : cfg.compact_encoder ? pick_compact_encoder(layer.sums, layer.kind, cfg)
                         : stream              ? pick_stream(layer.sums, layer.kind, cfg)
                                  : pick_for(layer.sums, layer.kind, cfg.kc, cfg.ct, cfg.rows, cfg.ahead);
@@ -151,9 +153,7 @@ inline bool shape(Layer& layer, const Config& cfg) {
   const int grid_y = stream ? conv_stream::strips_for(tiles_y, cfg.bands) : tiles_y;
   layer.grid = dim3(static_cast<unsigned>((layer.ow + kTW - 1) / kTW), static_cast<unsigned>(grid_y),
                     static_cast<unsigned>(layer.phases * layer.tiles * cfg.ksplit));
-  if (cfg.resident_residual) {
-    layer.smem = resident_residual_smem();
-  } else if (cfg.compact_encoder && layer.kind == Kind::kImage) {
+  if (cfg.compact_encoder && layer.kind == Kind::kImage) {
     using Input = Geometry<3, 2, 1>;
     layer.smem = std::max(Input::kIR * Input::kIC * static_cast<int>(sizeof(uint2)),
                           th * kTW * (cfg.ct + 8) * static_cast<int>(sizeof(__half)));

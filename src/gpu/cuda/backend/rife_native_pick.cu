@@ -211,12 +211,10 @@ Launch pick_for(RifeNativeSums sums, Kind kind, int kc, int ct, int rows, bool a
   return nullptr;
 }
 
-Launch pick_resident_residual() {
-  return resident::launch;
-}
-
-int resident_residual_smem() {
-  return resident::kInputValues * static_cast<int>(sizeof(__half));
+Launch pick_resident_residual(RifeNativeSums sums) {
+  if (sums == RifeNativeSums::kF16) return resident::launch<1, Acc::kF16>;
+  if (sums == RifeNativeSums::kF32) return resident::launch<2, Acc::kF32>;
+  return nullptr;
 }
 
 Launch pick_compact_encoder(RifeNativeSums sums, Kind kind, const Config& cfg) {

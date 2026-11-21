@@ -311,7 +311,7 @@ class Net final : public RifeNativeNet {
   // Compare d'abord les codes du même calendrier K32. La référence K16 utilisée
   // pour le réglage général additionne certains produits dans un autre ordre.
   void try_resident(rn::Bench& bench, Layer& layer, const void* weights, float fastest, Config& best) const {
-    if (!ada_ || !rn::can_reside(layer, best)) return;
+    if (!ada_ || layer.sums != RifeNativeSums::kF16 || !rn::can_reside(layer, best)) return;
     const char* const resident_ab = std::getenv("KIRARI_AB_RIFE_RESIDENT");  // env: banc
     if (resident_ab != nullptr && std::strcmp(resident_ab, "0") == 0) return;
     std::string ignored;

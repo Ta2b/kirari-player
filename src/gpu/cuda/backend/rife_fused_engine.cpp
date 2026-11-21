@@ -33,6 +33,7 @@ struct NativeTile {
   int n = 16;
   int rows = 2;
   int split = 1;
+  bool resident = false;
 };
 
 std::vector<RifeNativeTuned> native_preset(const RifeFusedKey& key) {
@@ -51,6 +52,7 @@ std::vector<RifeNativeTuned> native_preset(const RifeFusedKey& key) {
 
   constexpr NativeTile ingress{32, 32, 1};
   constexpr NativeTile wide{32, 32, 2};
+  constexpr NativeTile fine{.k = 32, .n = 32, .resident = true};
   using Block = std::array<NativeTile, 4>;  // entrée, réduction, résidus, tête
   constexpr Block coarse{{{16, 32, 1}, ingress, {64, 16, 2}, {32, 16, 2}}};
   constexpr Block previous{{ingress, ingress, wide, wide}};
@@ -59,13 +61,13 @@ std::vector<RifeNativeTuned> native_preset(const RifeFusedKey& key) {
       {{ingress, {32, 32, 1, 2}, {32, 32, 2, 3}, {32, 16, 2}}},
       {{{32, 16, 1}, {16, 32, 1}, wide, wide}},
       previous,
-      {{{16, 16, 1}, {16, 32, 1}, wide, wide}},
+      {{{16, 16, 1}, {16, 32, 1}, fine, wide}},
   }};
   constexpr std::array<Block, 4> light{{
       coarse,
       {{ingress, ingress, {32, 16, 2}, wide}},
       previous,
-      {{{32, 16, 1}, {16, 32, 1}, wide, wide}},
+      {{{32, 16, 1}, {16, 32, 1}, fine, wide}},
   }};
 
   std::vector<RifeNativeTuned> tuned;
@@ -77,7 +79,8 @@ std::vector<RifeNativeTuned> native_preset(const RifeFusedKey& key) {
                      .ct = tile.n,
                      .rows = tile.rows,
                      .ksplit = tile.split,
-                     .compact_encoder = compact});
+                     .compact_encoder = compact,
+                     .resident_residual = tile.resident});
   };
   use(0, 0, {16, 16, 1}, true);
   use(0, 3, {16, 16, 1}, true);

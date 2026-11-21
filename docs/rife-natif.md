@@ -359,6 +359,15 @@ les mêmes 37 601 280 valeurs RGB sur six sorties. Le p95 du Lite baisse
 de 4,45–4,49 à 4,21–4,30 ms sur le premier extrait, puis varie de 4,40 à
 4,66 ms contre 4,53 ms sur le second. La variante reste au banc.
 
+Sur la RTX 4070 Ti, les huit résidus du dernier bloc CUDA direct reprennent
+maintenant le centre du halo déjà chargé en mémoire partagée. Ils conservent
+les sommes FP32 et leur calendrier K32. Le banc des huit résidus passe
+d'environ 302 à 280 µs sur les deux modèles sans pression de cache ajoutée.
+Les sorties de six interpolations réelles sont identiques bit à bit.
+Dans le lecteur avec SPAN Balanced FP16, le p95 GPU passe de 4,55–4,74 à
+4,52–4,66 ms pour 4.25 et de 4,65–4,67 à 4,51–4,58 ms pour Lite.
+Les huit passages confirment 165,00 nouvelles images/s en fenêtre Wayland.
+
 L'essai complet :
 
 1. **quatre réseaux natifs**, du plus rapide au plus juste : sommes f16 ; f16 et tête f32 ; mixtes et tête f32 ;
