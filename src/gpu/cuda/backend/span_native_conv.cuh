@@ -81,7 +81,16 @@ __device__ __forceinline__ void finish(const Frag<A> (&acc)[kMF][Cout / 8], __ha
   if constexpr (M == Mode::kGate) {
     gate_tile<Cout, A, CacheV, Rolling>(acc, s, p, ty0, tx0, warp, lane, hit);
   } else {
-    plain<Cout, Relu, A, PackedNoStatus>(acc, s, p.bias, warp, lane, hit);
+    if constexpr (PackedNoStatus) {
+      static_assert(A == Acc::kF16 && M == Mode::kPlain);
+      if (p.overflow == nullptr) {
+        plain<Cout, Relu, A, true>(acc, s, p.bias, warp, lane, hit);
+      } else {
+        plain<Cout, Relu, A>(acc, s, p.bias, warp, lane, hit);
+      }
+    } else {
+      plain<Cout, Relu, A>(acc, s, p.bias, warp, lane, hit);
+    }
   }
   // Rare : plusieurs fils écrivent la même valeur, sans atomique (note_overflow du FP8).
   if constexpr (A == Acc::kF16)
@@ -93,6 +102,10 @@ __device__ __forceinline__ void finish(const Frag<A> (&acc)[kMF][Cout / 8], __ha
     store_nhwc<Cout, kTH, Rolling>(s, p, ty0, tx0);
 }
 
+template <int Cin, int Cout, int Taps, int Sources, Src From, Mode M, bool Shared>
+inline constexpr bool kCompactDirect = Cin == 48 && Cout == 48 && Taps == 9 && Sources == 1 &&
+                                       From == Src::kNhwc && M == Mode::kPlain && !Shared;
+
 // Une convolution entière. Sources : 1 (kImage, ou une NHWC), ou 4 (conv_cat, K = 4 · Cin). Shared : les
 // poids partagés (accumulate_shared), leurs deux pas juste après la tuile.
 template <int Cin, int Cout, int Taps, int Sources, Src From, Mode M, bool Relu, Acc A, bool Shared = false,
@@ -100,8 +113,7 @@ template <int Cin, int Cout, int Taps, int Sources, Src From, Mode M, bool Relu,
 __global__ void __launch_bounds__(kThreads) conv_kernel(Params p) {
   static_assert(Cin % 16 == 0 && Cout % 16 == 0, "canaux par 16");
   static_assert(M != Mode::kGate || Cin == Cout, "la porte suit une conv carrée");
-  static_assert(!Compact || (Cin == 48 && Cout == 48 && Taps == 9 && Sources == 1 && From == Src::kNhwc &&
-                             M == Mode::kPlain && !Shared));
+  static_assert(!Compact || kCompactDirect<Cin, Cout, Taps, Sources, From, M, Shared>);
   constexpr int kHalo = Taps == 9 ? 1 : 0;
   extern __shared__ __align__(16) unsigned char smem_raw[];
   auto* s = reinterpret_cast<__half*>(smem_raw);
@@ -148,14 +160,7 @@ __global__ void __launch_bounds__(kThreads) conv_kernel(Params p) {
     }
   }
   __syncthreads();  // la tuile d'entrée n'est plus lue : la mémoire partagée reçoit la sortie
-  if constexpr (PackedNoStatus) {
-    static_assert(A == Acc::kF16 && M == Mode::kPlain);
-    if (p.overflow == nullptr) {
-      finish<Cout, M, Relu, A, CacheV, Rolling, true>(acc, s, p, ty0, tx0, warp, lane);
-      return;
-    }
-  }
-  finish<Cout, M, Relu, A, CacheV, Rolling>(acc, s, p, ty0, tx0, warp, lane);
+  finish<Cout, M, Relu, A, CacheV, Rolling, PackedNoStatus>(acc, s, p, ty0, tx0, warp, lane);
 }
 
 }  // namespace kirari::gpu::cuda::span_native
