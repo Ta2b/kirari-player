@@ -80,13 +80,20 @@ __host__ __device__ __forceinline__ int row_end(const Params& p) {
 // distinctes : un pas impair le donne (un morceau de rembourrage par pixel, le rangement d'origine). Shared
 // (poids partagés, conv_kernel) : à 64 canaux, la tuile n'a pas la place du rembourrage à côté des poids ;
 // elle est rangée sans, le morceau c du pixel p à la place c ^ (p % 8).
-template <int Cin, bool Shared>
+template <int Cin, bool Shared, bool Compact = false>
 struct Tile {
   static constexpr int kChunks = Cin / 8;
   static constexpr bool kSwizzle = Shared && kChunks % 8 == 0;
   static constexpr int kPitch = kSwizzle ? kChunks : kChunks + 1;
   // L'octet du morceau c du pixel p.
   __host__ __device__ static constexpr int at(int p, int c) {
+    if constexpr (Compact) {
+      // Bijective par groupes de huit blocs de 16 octets : l'écriture contiguë et
+      // la lecture ldmatrix d'un canal de huit pixels visitent huit banques.
+      static_assert(Cin == 48 && !Shared);
+      const int i = p * kChunks + c;
+      return (i ^ ((i >> 3) & 1)) * 16;
+    }
     return (p * kPitch + (kSwizzle ? c ^ (p & 7) : c)) * 16;
   }
 };
@@ -196,6 +203,13 @@ __device__ __forceinline__ float2 sums(const Frag<A>& frag, int h, bool& hit) {
   return s;
 }
 
+// Même borne que fixed_pair<true> du Winograd vertical.
+__device__ __forceinline__ float2 packed_sums_no_status(const Frag<Acc::kF16>& frag, int h) {
+  const auto& v = reinterpret_cast<const __half2&>(frag.r[h]);
+  const auto bounded = __hmin2(__hmax2(v, __float2half2_rn(-65504.F)), __float2half2_rn(65504.F));
+  return unpack_half2(reinterpret_cast<const unsigned&>(bounded) & __heq2_mask(v, v));
+}
+
 __device__ __forceinline__ std::uint32_t pack_half2(float lo, float hi) {
   __half2 h = __floats2half2_rn(lo, hi);
   return *reinterpret_cast<std::uint32_t*>(&h);
@@ -209,7 +223,8 @@ __device__ __forceinline__ float tanh_approx(float x) {
 
 // La tuile NHWC de src en mémoire partagée, rangée selon Tile : (Height + 2h) × (kTW + 2h) pixels dont
 // l'origine est (ty0 - h, tx0 - h) ; zéros hors de l'image.
-template <int Cin, int Halo, bool Shared = false, int Height = kTH, bool Rolling = false>
+template <int Cin, int Halo, bool Shared = false, int Height = kTH, bool Rolling = false,
+          bool Compact = false>
 __device__ __forceinline__ void load_nhwc(__half* s, const __half* src, int ld, int fh, int fw, int ty0,
                                           int tx0, int row_mask = -1) {
   constexpr int kChunks = Cin / 8, kSW = kTW + 2 * Halo, kPix = (Height + 2 * Halo) * kSW;
@@ -220,7 +235,7 @@ __device__ __forceinline__ void load_nhwc(__half* s, const __half* src, int ld, 
     const bool ok = y >= 0 && y < fh && x >= 0 && x < fw;
     const int row = Rolling ? y & row_mask : y;
     const __half* from = ok ? src + (static_cast<long>(row) * fw + x) * ld + c * 8 : src;
-    cp_async16(base + static_cast<std::uint32_t>(Tile<Cin, Shared>::at(p, c)), from, ok);
+    cp_async16(base + static_cast<std::uint32_t>(Tile<Cin, Shared, Compact>::at(p, c)), from, ok);
   }
 }
 
@@ -248,7 +263,7 @@ __device__ __forceinline__ void load_image(__half* s, const __half* img, int fh,
 
 // Les sommes d'une source sur la tuile : K = taps × Cin, à partir du pas ks0 des poids rangés.
 // acc[f][nt] : fragment f (ligne f / 2 du warp, colonnes 16·(f % 2) à + 15), tuile n8 nt.
-template <int Cin, int Cout, int Taps, Acc A>
+template <int Cin, int Cout, int Taps, Acc A, bool Compact = false>
 __device__ __forceinline__ void accumulate(Frag<A> (&acc)[kMF][Cout / 8], const __half* s, const uint4* w,
                                            int ks0, int warp, int lane) {
   constexpr int kHalo = Taps == 9 ? 1 : 0, kSW = kTW + 2 * kHalo, kLds = Cin + 8;
@@ -273,9 +288,16 @@ __device__ __forceinline__ void accumulate(Frag<A> (&acc)[kMF][Cout / 8], const 
       for (int np = 0; np < kNP; ++np) bn[np] = __ldg(wl + (static_cast<long>(next) * kNP + np) * 32);
       std::uint32_t a[kMF][4];
 #pragma unroll
-      for (int f = 0; f < kMF; ++f)
-        ldmatrix4(a[f], base + static_cast<std::uint32_t>(
-                                   (((f >> 1) + dy) * kSW + 16 * (f & 1) + dx) * kLds * 2 + kc * 32));
+      for (int f = 0; f < kMF; ++f) {
+        if constexpr (Compact) {
+          const int p = (warp * kRows + (f >> 1) + dy) * kSW + (lane & 15) + 16 * (f & 1) + dx;
+          ldmatrix4(a[f], smem_u32(s) + static_cast<std::uint32_t>(
+                                            Tile<Cin, false, true>::at(p, 2 * kc + (lane >> 4))));
+        } else {
+          ldmatrix4(a[f], base + static_cast<std::uint32_t>(
+                                     (((f >> 1) + dy) * kSW + 16 * (f & 1) + dx) * kLds * 2 + kc * 32));
+        }
+      }
 #pragma unroll
       for (int f = 0; f < kMF; ++f)
 #pragma unroll
@@ -416,7 +438,7 @@ __device__ __forceinline__ void gate(const Frag<A> (&acc)[kMF][C / 8], __half* o
 }
 
 // Biais (+ Relu) de acc vers o (pas Cout + 8).
-template <int Cout, bool Relu, Acc A>
+template <int Cout, bool Relu, Acc A, bool PackedNoStatus = false>
 __device__ __forceinline__ void plain(const Frag<A> (&acc)[kMF][Cout / 8], __half* o, const float* bias,
                                       int warp, int lane, bool& hit) {
   constexpr int kNT = Cout / 8, kLdo = Cout + 8;
@@ -430,7 +452,12 @@ __device__ __forceinline__ void plain(const Frag<A> (&acc)[kMF][Cout / 8], __hal
       const float2 b = __ldg(reinterpret_cast<const float2*>(bias + ch));
 #pragma unroll
       for (int h = 0; h < 2; ++h) {
-        const float2 s = sums(acc[f][nt], h, hit);
+        const float2 s = [&]() {
+          if constexpr (PackedNoStatus)
+            return packed_sums_no_status(acc[f][nt], h);
+          else
+            return sums(acc[f][nt], h, hit);
+        }();
         float x0 = s.x + b.x, x1 = s.y + b.y;
         if constexpr (Relu) {
           x0 = fmaxf(x0, 0.F);

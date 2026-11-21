@@ -508,6 +508,22 @@ En fenêtre, sur la source à 120 i/s avec Sharp1, le p95 de l'ensemble des pass
 de 5,936 à 5,308 ms sur un A/B. Les médianes sont de 3,579 et 3,603 ms, environ deux tiers
 des passes utilisent un masque, et Wayland confirme 363/363 images nouvelles dans les deux cas.
 
+Sur Performance Sharp1 à 1920 × 1080 sur Ada 60 SM, les cinq C2 directes
+rangent les activations C48 en partagé sans rembourrage. Le changement
+permet trois blocs résidents par SM et garde l'ordre des MMA. L'épilogue
+borne deux valeurs FP16 ensemble quand aucun signal de débordement n'est
+demandé. Les 30 comparaisons des sorties 4K et des masques passent bit à bit.
+La borne vectorisée donne aussi les mêmes résultats sur les 65 536 motifs FP16.
+
+Dans le lecteur en calcul dense, les deux passages de chaque variante
+donnent **5,278 → 4,952 ms** en médiane, soit **22,91 % → 24,42 %**
+de la même borne F(2×2) avec fusion de 1,209 ms. Avec réemploi par tuiles et
+la même région utile, les médianes du moteur passent de 3,358 à 3,274 ms.
+Ces passages par tuiles affichent 164,999 nouvelles images/s via Wayland,
+sans abandon. Un passage dense candidat abandonne deux images. Le contrôle
+du binaire final obtient 4,880 ms en dense et 164,999 nouvelles images/s
+sans abandon, avec 5 150 lancements du noyau compact relevés par Nsight.
+
 Le réemploi des poids entre deux paires de lignes de la convolution verticale C64 a aussi
 été testé sur l'image entière. Les deux sorties Balanced restent identiques au bit près,
 mais les minima du réseau passent de 8,173–8,233 à 8,179–8,314 ms. Cette forme reste au banc.

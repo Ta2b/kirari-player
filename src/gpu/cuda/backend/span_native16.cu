@@ -295,6 +295,17 @@ class NativeBody final : public SpanFp8Body {
          weights.winograd == SpanWinograd::VerticalDirectRelu || second_direct_);
     unrolled_ = weights.winograd == SpanWinograd::VerticalUnrolled;
     if constexpr (A == sn::Acc::kF16) configure_gates(weights.winograd);
+    if constexpr (C == 48 && A == sn::Acc::kF16) {
+      compact_second_ = false;
+      if (second_direct_ && vertical_gate_cat_ && weights.shared_weights == SpanSharedWeights::Auto) {
+        int device = 0, multiprocessors = 0;
+        if (cudaGetDevice(&device) == cudaSuccess &&
+            cudaDeviceGetAttribute(&multiprocessors, cudaDevAttrMultiProcessorCount, device) == cudaSuccess)
+          compact_second_ = multiprocessors == 60;
+        else
+          static_cast<void>(cudaGetLastError());
+      }
+    }
     configure_bands(weights);
   }
 
@@ -394,7 +405,7 @@ class NativeBody final : public SpanFp8Body {
       c2.input_row_mask[0] = c2.output_row_mask = rolling;
       const Rows second_rows = front.next(1, quantum);
       if (second_direct_)
-        run<C, C, 9, 1, S::kNhwc, M::kPlain, true>(stream, c2, second_rows);
+        run_second_direct(stream, c2, second_rows);
       else
         block<M::kPlain, true>(stream, c2, second_rows);
       sn::Params c3 = params(conv_[b][2], out, 3 * b + 3);
@@ -445,6 +456,23 @@ class NativeBody final : public SpanFp8Body {
     // Relu du dernier bloc (l'ordre des poids de conv_cat). La sortie s'écrit sur S0, sur place : une 1×1 ne
     // lit que ses propres pixels, et les blocs ont fini de lire S0 sur ces lignes.
     if (!fused) run<C, C, 1, 4, S::kNhwc, M::kPlain, false>(stream, cat, front.next(0));
+  }
+
+  void run_second_direct(cudaStream_t stream, sn::Params p, Rows rows) const {
+    if constexpr (C == 48 && A == sn::Acc::kF16) {
+      if (compact_second_) {
+        if (rows.from >= rows.to) return;
+        p.y0 = rows.from;
+        p.y1 = rows.to;
+        const dim3 grid(grid_.x, static_cast<unsigned>((rows.to - rows.from + sn::kTH - 1) / sn::kTH));
+        // Sans le remplissage, trois blocs résident par SM au lieu de deux avec les poids partagés.
+        constexpr int bytes = (sn::kTH + 2) * (sn::kTW + 2) * C * 2;
+        sn::conv_kernel<C, C, 9, 1, S::kNhwc, M::kPlain, true, A, false, false, false, true, true>
+            <<<grid, sn::kThreads, bytes, stream>>>(p);
+        return;
+      }
+    }
+    run<C, C, 9, 1, S::kNhwc, M::kPlain, true>(stream, p, rows);
   }
 
   // Les lignes rows d'une convolution ; rien si elles sont vides.
@@ -548,6 +576,7 @@ class NativeBody final : public SpanFp8Body {
   bool shared_ = false;   // poids partagés (SpanFp8Weights::shared_weights)
   bool layered_masks_ = false;
   bool unrolled_ = false;
+  bool compact_second_ = false;     // tuile C48 et borne FP16 par paire sur Ada 60 SM
   bool second_direct_ = false;      // compromis vérifié sur Performance Sharp1
   bool vertical_ = false;           // Winograd le long des paires de lignes
   bool direct_relu_ = false;        // écrire les ReLU C48 en global depuis les fragments

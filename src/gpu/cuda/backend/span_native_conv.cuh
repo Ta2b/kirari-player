@@ -73,14 +73,15 @@ __device__ __forceinline__ void gate_tile(const Frag<A> (&acc)[kMF][Cout / 8], _
 
 // La fin d'une convolution, une fois les sommes dans acc et la mémoire partagée libre : épilogue (porte ou
 // biais et Relu) vers s, puis l'écriture. Commune à conv_kernel et à wino_kernel (span_native_wino.cuh).
-template <int Cout, Mode M, bool Relu, Acc A, bool CacheV = false, bool Rolling = false>
+template <int Cout, Mode M, bool Relu, Acc A, bool CacheV = false, bool Rolling = false,
+          bool PackedNoStatus = false>
 __device__ __forceinline__ void finish(const Frag<A> (&acc)[kMF][Cout / 8], __half* s, const Params& p,
                                        int ty0, int tx0, int warp, int lane) {
   bool hit = false;  // une somme f16 débordée (sums)
   if constexpr (M == Mode::kGate) {
     gate_tile<Cout, A, CacheV, Rolling>(acc, s, p, ty0, tx0, warp, lane, hit);
   } else {
-    plain<Cout, Relu, A>(acc, s, p.bias, warp, lane, hit);
+    plain<Cout, Relu, A, PackedNoStatus>(acc, s, p.bias, warp, lane, hit);
   }
   // Rare : plusieurs fils écrivent la même valeur, sans atomique (note_overflow du FP8).
   if constexpr (A == Acc::kF16)
@@ -95,10 +96,12 @@ __device__ __forceinline__ void finish(const Frag<A> (&acc)[kMF][Cout / 8], __ha
 // Une convolution entière. Sources : 1 (kImage, ou une NHWC), ou 4 (conv_cat, K = 4 · Cin). Shared : les
 // poids partagés (accumulate_shared), leurs deux pas juste après la tuile.
 template <int Cin, int Cout, int Taps, int Sources, Src From, Mode M, bool Relu, Acc A, bool Shared = false,
-          bool CacheV = false, bool Rolling = false>
+          bool CacheV = false, bool Rolling = false, bool Compact = false, bool PackedNoStatus = false>
 __global__ void __launch_bounds__(kThreads) conv_kernel(Params p) {
   static_assert(Cin % 16 == 0 && Cout % 16 == 0, "canaux par 16");
   static_assert(M != Mode::kGate || Cin == Cout, "la porte suit une conv carrée");
+  static_assert(!Compact || (Cin == 48 && Cout == 48 && Taps == 9 && Sources == 1 && From == Src::kNhwc &&
+                             M == Mode::kPlain && !Shared));
   constexpr int kHalo = Taps == 9 ? 1 : 0;
   extern __shared__ __align__(16) unsigned char smem_raw[];
   auto* s = reinterpret_cast<__half*>(smem_raw);
@@ -131,8 +134,8 @@ __global__ void __launch_bounds__(kThreads) conv_kernel(Params p) {
                    : src == 1 ? p.input_row_mask[1]
                    : src == 2 ? p.input_row_mask[2]
                               : p.input_row_mask[3];
-      load_nhwc<Cin, kHalo, Shared, kTH, Rolling>(s, from, p.in_ld != 0 ? p.in_ld : Cin, p.fh, p.fw, ty0, tx0,
-                                                  row_mask);
+      load_nhwc<Cin, kHalo, Shared, kTH, Rolling, Compact>(s, from, p.in_ld != 0 ? p.in_ld : Cin, p.fh, p.fw,
+                                                           ty0, tx0, row_mask);
       cp_async_wait_all();
     }
     __syncthreads();
@@ -141,10 +144,17 @@ __global__ void __launch_bounds__(kThreads) conv_kernel(Params p) {
       accumulate_shared<Cin, Cout, Taps, A>(acc, s, p.w, smem_u32(s) + kTile, src * Taps * (Cin / 16), warp,
                                             lane);
     } else {
-      accumulate<Cin, Cout, Taps, A>(acc, s, p.w, src * Taps * (Cin / 16), warp, lane);
+      accumulate<Cin, Cout, Taps, A, Compact>(acc, s, p.w, src * Taps * (Cin / 16), warp, lane);
     }
   }
   __syncthreads();  // la tuile d'entrée n'est plus lue : la mémoire partagée reçoit la sortie
+  if constexpr (PackedNoStatus) {
+    static_assert(A == Acc::kF16 && M == Mode::kPlain);
+    if (p.overflow == nullptr) {
+      finish<Cout, M, Relu, A, CacheV, Rolling, true>(acc, s, p, ty0, tx0, warp, lane);
+      return;
+    }
+  }
   finish<Cout, M, Relu, A, CacheV, Rolling>(acc, s, p, ty0, tx0, warp, lane);
 }
 
