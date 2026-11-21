@@ -351,6 +351,14 @@ images nouvelles à 165,00 i/s sur le segment central pour chacun des
 deux modèles. Les médianes GPU sont d'environ 3,17–3,18 ms pour RIFE
 et 8,27–8,28 ms pour SPAN dans ces passages.
 
+Retirer la fusion d'entrée du dernier bloc fait remonter la médiane du moteur
+de 3,21–3,34 à 4,48–4,49 ms pour 4.25 et de 3,11–3,22 à 4,31–4,43 ms pour Lite
+dans des passages alternés avec SPAN Balanced FP16. En gardant la fusion,
+une variante qui sépare le calcul du flot et du warp dans la tuile produit
+les mêmes 37 601 280 valeurs RGB sur six sorties. Le p95 du Lite baisse
+de 4,45–4,49 à 4,21–4,30 ms sur le premier extrait, puis varie de 4,40 à
+4,66 ms contre 4,53 ms sur le second. La variante reste au banc.
+
 L'essai complet :
 
 1. **quatre réseaux natifs**, du plus rapide au plus juste : sommes f16 ; f16 et tête f32 ; mixtes et tête f32 ;

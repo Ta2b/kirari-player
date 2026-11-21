@@ -776,3 +776,26 @@ Linux. Il ne se fait que sur demande de Tatoub, comme toute release.
 Une copie de ce bilan est rangée dans le dossier partagé du projet, sous `chantier-natif/bilan-gmfss.md`, à côté de
 la séance (`seance-pc-gmfss.md`), des plafonds (`gmfss-plafonds.md`) et du travail en pause (`en-pause/`, un patch
 par branche, à appliquer par `git am` sur `main`).
+
+## 6. Prototype entièrement CUDA en demi-flot 1080p
+
+Un exécutable de banc lit les deux ONNX distribués et enchaîne GMFlow strict, FeatureNet,
+MetricNet, les projections, IFNet et GridNet. Il construit les réseaux aux géométries de
+référence, sans autotune ni moteur TensorRT. La table de liaison de l'exécutable indépendant
+contient le runtime CUDA et les bibliothèques standard, sans TensorRT ni Vulkan.
+
+Sur deux paires réelles de 1920 × 1080, complétées à 1920 × 1152 pour le demi-flot,
+une référence ONNX Runtime CPU exécutant les mêmes fichiers donne après recadrage les
+écarts suivants. La préparation ONNX a pris 127 à 130 ms, puis le chargement CUDA
+413 à 426 ms par processus à froid.
+
+| Paire | PSNR RGB | RMSE | Écart absolu au p99 | Plus grand écart |
+| --- | ---: | ---: | ---: | ---: |
+| 960,40 s | 52,15 dB | 0,002469 | 0,008850 | 0,15918 |
+| 983,00 s | 74,13 dB | 0,000197 | 0,000732 | 0,00732 |
+
+Sur la première paire, 1 337 pixels sur 2 073 600 ont un écart de plus de 0,04 dans
+au moins un canal RGB. L'écart maximal se trouve en (922, 534), après recadrage.
+Le banc isolé utilise une référence séquentielle pour les projections et inclut des
+transferts. Le passage au lecteur demande les projections parallèles existantes,
+l'identification de l'étage qui produit l'écart local et une mesure Wayland avec composition.

@@ -7,6 +7,14 @@ garde TensorRT pour le dernier bloc lorsque les contrôles de rendu, de réemplo
 Les premiers blocs et l'encodeur du lecteur utilisent toujours TensorRT. Le bloc 1 CUDA reste au banc.
 Les mesures et le détail des contrôles sont dans [la fiche de la chaîne fusionnée](drba-fusionne.md).
 
+Un prototype de l'encodeur réutilise les convolutions RIFE à sommes FP32 puis range les
+16 canaux en plans pour la colle DistilDRBA. Sur deux trios réels de 480 × 272, les
+6 266 880 valeurs d'activation par trio donnent 86,25 à 89,71 dB face à ONNX Runtime
+CPU FP32. Le pire écart absolu est de 0,001664. Les passages stabilisés de l'encodeur seul
+mesurent 101,95 à 102,30 µs de médiane, rangement compris. Des passages ont aussi
+mesuré 0,46 à 0,71 ms. Il faut vérifier le coût en lecture et l'effet des écarts
+d'encodage sur le résultat de la chaîne entière.
+
 ## Proposition initiale du 19 novembre 2026
 
 Le plan ci-dessous visait les trois blocs et l'encodeur. Les noms, estimations et options correspondent

@@ -203,6 +203,23 @@ numéro 5 606 dure 2,149 ms. Les durées de ces captures uniques varient avec l'
 Avec un nouvel encodage sur 4.22 Lite, le graphe nº 3 575 transfère 442,87 Mo en DDR
 et 2 588,52 Mo au L2. Sa borne de trafic est de 0,942 ms et sa durée profilée de 2,208 ms.
 
+### Compteurs du mode CUDA direct en sommes FP32
+
+Sur RTX 4070 Ti, Nsight Compute encadre le dixième rejeu de chaque graphe en 1920 × 1088.
+Chaque rejeu calcule tous les blocs et réencode la seconde image. Les géométries du mode
+CUDA direct sont fixes. La durée porte sur le moteur, avant l'application du mouvement
+à la vidéo et la composition. Les identifiants CUDA et les états du cache sont appariés
+aux marqueurs du lecteur.
+
+| Modèle CUDA direct | DDR lue + écrite | Trafic L2 | Durée profilée | Borne du trafic réalisé |
+| --- | ---: | ---: | ---: | ---: |
+| RIFE 4.25 | 444,96 Mo | 2 339,78 Mo | 2,835 ms | 0,883 ms |
+| RIFE 4.22 Lite | 434,43 Mo | 2 351,63 Mo | 2,715 ms | 0,862 ms |
+
+La borne du trafic donne une limite des transferts pour ces volumes. Il reste à relever
+les opérations Tensor et le coût des synchronisations dans les mêmes graphes pour estimer
+la marge totale. Les chronos avec présentation sont donnés dans [RIFE natif](rife-natif.md).
+
 ### Gains à vérifier
 
 - Pour RIFE, le gain Tensor brut de Winograd 2D atteint 0,242 ms pour 4.25 et 0,254 ms pour Lite avec un
