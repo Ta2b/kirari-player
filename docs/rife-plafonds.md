@@ -190,6 +190,13 @@ est proche du graphe fusionné précédent. Le gain observé en lecture est coh�
 réemploi des coordonnées et la résidence accrue. Le chronométrage isolé de cette capture, à
 fréquences variables, est plus long de 61 µs. [Mesures appariées du lecteur](drba-fusionne.md).
 
+Sur le dixième rejeu à froid, une capture de la même chaîne sans puis avec
+la nouvelle colle mesure 189,77 puis 149,18 Mo en DDR et 956,95 puis 913,83 Mo
+au L2. Le plancher de trafic passe de 0,377 à 0,333 ms. Les durées isolées
+sont de 0,956 et 1,580 ms à fréquences libres. Le chronométrage de la
+fusion dans le lecteur vient des passages appariés avec composition.
+[Mesures DistilDRBA](drba-fusionne.md).
+
 Un graphe RIFE 4.25 avec un nouvel encodage, à la même taille, a lu et écrit 451,13 Mo
 en DDR et transféré 2 516,07 Mo au L2. Pour ce trafic, la borne est de 0,916 ms. La capture
 numéro 5 606 dure 2,149 ms. Les durées de ces captures uniques varient avec l'état de la carte.
@@ -206,5 +213,5 @@ et 2 588,52 Mo au L2. Sa borne de trafic est de 0,942 ms et sa durée profilée 
   et de blocs grossiers directs à Winograd 2D sur tous les 3×3 éligibles ne retire que 0,041 à 0,044 ms de
   calcul Tensor au pic FP16. La préparation de `X_2` est déjà fusionnée à chaud sur Ada, avec réemploi
   de ses sommes intermédiaires. À froid, la première convolution du dernier bloc natif lit les plans
-  fixes et produit les canaux variables en partagé. Il reste à mesurer les octets DDR et L2 du
-  graphe à froid avec cette fusion. [Voie actuelle](drba-fusionne.md).
+  fixes et produit les canaux variables en partagé. La capture ci-dessus chiffre les octets
+  DDR et L2 de cette voie. [Voie actuelle](drba-fusionne.md).

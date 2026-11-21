@@ -291,6 +291,12 @@ de trois à quatre blocs par SM sur Ada. Les médianes candidates restent
 entre 167 et 179 µs pour des témoins appariés entre 165 et 175 µs.
 Le lecteur garde le chargement actuel.
 
+Le remplacement de la GELU du MLP par une table de 128 Kio retrouve les
+mêmes valeurs pour tous les codes FP16 et les mêmes sorties sur deux
+états réels. Au banc Ada, les deux médianes par couche augmentent de
+226 à 456 µs et de 230 à 379 µs. Les lectures du tableau ne compensent
+pas les instructions élémentaires retirées. Cette variante reste au banc.
+
 ### Projections directes dans GridNet
 
 L'option « Projections GMFSS directes (essai) » dans Interpolation > Avancé, ou
