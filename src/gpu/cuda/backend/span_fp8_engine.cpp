@@ -94,6 +94,7 @@ struct KernelTrial {
   double db = 0.0;
   std::optional<double> fp32_gain_db;
   float reference_ms = 0.F, native_ms = 0.F;
+  bool same_bits = false;
 };
 
 // Trois motifs dans la même image : contours tramés, couleurs saturées et détails des ombres.
@@ -287,8 +288,11 @@ std::expected<KernelTrial, Refusal> compare_kernels(SpanFp8Net& reference, SpanF
       times[choice][round] = *ms;
     }
   for (auto& samples : times) std::ranges::sort(samples);
-  return KernelTrial{
-      .db = db, .fp32_gain_db = fp32_gain, .reference_ms = times[0][1], .native_ms = times[1][1]};
+  return KernelTrial{.db = db,
+                     .fp32_gain_db = fp32_gain,
+                     .reference_ms = times[0][1],
+                     .native_ms = times[1][1],
+                     .same_bits = *want == *got};
 }
 
 // L'essai de zéros, puis, pour le SPAN FP16 natif, le jugement contre le calcul du processeur
@@ -472,7 +476,41 @@ std::expected<bool, Refusal> SpanFp8Engine::try_vertical_net(const span_fp8::Pac
   winograd_notice_ = "SPAN FP16 : Winograd vertical retenu, " + result;
   native_check_db_ = *checked;
   net_ = std::move(candidate);
+  if (performance_fp16_ == PerformanceFp16::Standard && height == 1080 && width == 1920 &&
+      span_ada_device()) {
+    if (auto relu = try_direct_relu(weights, workspace, height, width); !relu)
+      return std::unexpected(std::move(relu.error()));
+  }
   return true;
+}
+
+std::expected<void, Refusal> SpanFp8Engine::try_direct_relu(SpanFp8Weights weights, void* workspace,
+                                                            int height, int width) {
+  constexpr std::string_view label = "magasins ReLU C48";
+  const auto retain = [&](const std::string& detail) -> std::expected<void, Refusal> {
+    if (const auto lost = clear_error(); lost != cudaSuccess)
+      return std::unexpected(lost_refusal(lost, label));
+    winograd_notice_ += std::format(" ; {} écartés, {}", label, detail);
+    return {};
+  };
+  weights.winograd = SpanWinograd::VerticalDirectRelu;
+  SpanFp8Status status = SpanFp8Status::Ok;
+  std::string why;
+  auto candidate = SpanFp8Net::create(weights, height, width, status, why);
+  if (!candidate) return retain("poids : " + why);
+  if (candidate->workspace_bytes() != net_->workspace_bytes()) return retain("taille de la zone différente");
+  candidate->bind(workspace);
+  auto compared = compare_kernels(*net_, *candidate, height, width, label);
+  if (!compared) {
+    if (compared.error().code == RefusalCode::DeviceLost) return std::unexpected(std::move(compared.error()));
+    return retain(compared.error().detail);
+  }
+  if (!compared->same_bits) return retain("les codes FP16 diffèrent dans les bandes d'essai");
+  const auto times = std::format("{:.2f} ms contre {:.2f} ms", compared->native_ms, compared->reference_ms);
+  if (compared->native_ms >= 0.98F * compared->reference_ms) return retain(times);
+  winograd_notice_ += std::format(" ; {} retenus, {}", label, times);
+  net_ = std::move(candidate);
+  return {};
 }
 
 std::expected<void, Refusal> SpanFp8Engine::try_relu_net(SpanFp8Weights weights, void* workspace) {

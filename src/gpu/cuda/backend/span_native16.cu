@@ -96,16 +96,6 @@ int auto_band(int width, int channels) {
   return 3 * (2 * slice) <= 2 * std::int64_t{l2} ? 128 : 64;
 }
 
-bool ada_device() {
-  int device = 0;
-  cudaDeviceProp props{};
-  if (cudaGetDevice(&device) != cudaSuccess || cudaGetDeviceProperties(&props, device) != cudaSuccess) {
-    static_cast<void>(cudaGetLastError());
-    return false;
-  }
-  return props.major == 8 && props.minor == 9;
-}
-
 constexpr std::int64_t kAlign = 256;
 constexpr std::int64_t align_up(std::int64_t bytes) {
   return (bytes + kAlign - 1) / kAlign * kAlign;
@@ -299,25 +289,31 @@ class NativeBody final : public SpanFp8Body {
     wino_ = C == sn::kWinoC && A == sn::Acc::kF16 && weights.winograd == SpanWinograd::On;
     second_direct_ = C == 48 && A == sn::Acc::kF16 && !weights.compact_workspace &&
                      weights.winograd == SpanWinograd::VerticalSecondDirect;
-    vertical_ = (C == 64 || C == 48) && A == sn::Acc::kF16 && !weights.compact_workspace &&
-                (weights.winograd == SpanWinograd::Vertical ||
-                 weights.winograd == SpanWinograd::VerticalUnrolled || second_direct_);
+    vertical_ =
+        (C == 64 || C == 48) && A == sn::Acc::kF16 && !weights.compact_workspace &&
+        (weights.winograd == SpanWinograd::Vertical || weights.winograd == SpanWinograd::VerticalUnrolled ||
+         weights.winograd == SpanWinograd::VerticalDirectRelu || second_direct_);
     unrolled_ = weights.winograd == SpanWinograd::VerticalUnrolled;
-    if constexpr (A == sn::Acc::kF16) configure_gates();
+    if constexpr (A == sn::Acc::kF16) configure_gates(weights.winograd);
     configure_bands(weights);
   }
 
-  void configure_gates() {
+  void configure_gates(SpanWinograd winograd) {
     if constexpr (C == 64) {
       // La porte à 64 canaux réemploie l'épilogue sur le chemin mesuré en 1080p sur Ada.
-      const bool tuned = used_ == 8 && fw_ == 960 && fh_ == 540 && ada_device();
+      const bool tuned = used_ == 8 && fw_ == 960 && fh_ == 540 && span_ada_device();
       gate_cache_ = tuned && !shared_ && !wino_ && !vertical_;
       vertical_gate_cat_ = tuned && vertical_ && unrolled_;
       const char* const l1 = std::getenv("KIRARI_AB_SPAN_L1_INPUT");  // env: banc
       vertical_l1_input_ = vertical_gate_cat_ && (l1 == nullptr || std::string_view(l1) != "0");
     } else if constexpr (C == 48) {
-      vertical_gate_cat_ = vertical_ && used_ == 5 && fw_ == 960 && fh_ == 540 && ada_device();
+      vertical_gate_cat_ = vertical_ && used_ == 5 && fw_ == 960 && fh_ == 540 && span_ada_device();
+      direct_relu_ = vertical_gate_cat_ && winograd == SpanWinograd::VerticalDirectRelu;
     }
+    configure_gate_cat_override();
+  }
+
+  void configure_gate_cat_override() {
     const char* fuse = std::getenv("KIRARI_AB_SPAN_GATE_CAT");  // env: banc
     if (fuse != nullptr && std::string_view(fuse) == "0") vertical_gate_cat_ = false;
     const bool compatible = C == 48 ? used_ == 5 : used_ == 8 && !shared_;
@@ -510,6 +506,13 @@ class NativeBody final : public SpanFp8Body {
             return;
           }
         }
+        if constexpr (C == 48 && Relu && Mode == M::kPlain) {
+          if (direct_relu_) {
+            sn::vertical::convolution<C, false, false, false, true>
+                <<<grid, sn::vertical::kWorkers<C>, sn::vertical::kShared<C>, stream>>>(p);
+            return;
+          }
+        }
         sn::vertical::convolution<C, Mode == M::kGate>
             <<<grid, sn::vertical::kWorkers<C>, sn::vertical::kShared<C>, stream>>>(p);
         return;
@@ -547,6 +550,7 @@ class NativeBody final : public SpanFp8Body {
   bool unrolled_ = false;
   bool second_direct_ = false;      // compromis vérifié sur Performance Sharp1
   bool vertical_ = false;           // Winograd le long des paires de lignes
+  bool direct_relu_ = false;        // écrire les ReLU C48 en global depuis les fragments
   bool wino_ = false;               // les 3×3 des blocs par Winograd (SpanFp8Weights::winograd)
   bool gate_cache_ = false;         // conserver v float2 entre 1×1 et produit de la porte
   bool vertical_gate_cat_ = false;  // dernière porte et concaténation dans la même tuile

@@ -214,9 +214,66 @@ __device__ __forceinline__ void store_transform(__half* s, const Params& p,
   }
 }
 
-template <int C, bool Gate, bool Packed, bool Cat>
+// Deux mots en demi-précision par lane, séparés de huit canaux, deviennent
+// un uint2 contigu. L'échange conserve les mots et les arrondis de store_transform.
+__device__ __forceinline__ void store_relu48(const Params& p, const Frag<Acc::kF16> (&acc)[2][kPoints][2],
+                                             int x0, int y0, int lane, int local_y, int out_channel) {
+  constexpr int C = 48;
+  const int pixel = lane >> 2, pair = lane & 3;
+  const int end = row_end(p);
+  const int y = y0 + local_y;
+  float2 bias[2];
+#pragma unroll
+  for (int n = 0; n < 2; ++n)
+    bias[n] = __ldg(reinterpret_cast<const float2*>(p.bias + out_channel + n * 8 + pair * 2));
+#pragma unroll
+  for (int f = 0; f < 2; ++f) {
+#pragma unroll
+    for (int h = 0; h < 2; ++h) {
+      const int x = x0 + 16 * f + pixel + 8 * h;
+      std::uint32_t rows[2][2];
+#pragma unroll
+      for (int n = 0; n < 2; ++n) {
+        const auto a = fixed_pair<true>(acc[f][0][n], h), b = fixed_pair<true>(acc[f][1][n], h);
+        const auto d = fixed_pair<true>(acc[f][2][n], h), e = fixed_pair<true>(acc[f][3][n], h);
+        const auto relu = [&](const __half2 narrowed) {
+          const auto v = __half22float2(narrowed);
+          const __half2_raw value = to_half2(fmaxf(0.F, v.x + bias[n].x), fmaxf(0.F, v.y + bias[n].y));
+          return std::uint32_t{value.x} | (std::uint32_t{value.y} << 16U);
+        };
+        rows[0][n] = relu(to_half2(a.x + b.x + d.x, a.y + b.y + d.y));
+        rows[1][n] = relu(to_half2(b.x - d.x - e.x, b.y - d.y - e.y));
+      }
+#pragma unroll
+      for (int dy = 0; dy < 2; ++dy) {
+        const auto lo = rows[dy][0], hi = rows[dy][1];
+        const long offset = (static_cast<long>(y + dy) * p.fw + x) * C + out_channel;
+        const bool valid = x < p.fw && y + dy >= p.y0 && y + dy < end;
+        // Chaque groupe de quatre lanes traite un pixel et 16 canaux.
+        // Lane 0 → 0–3, lane 1 → 8–11, lane 2 → 4–7, lane 3 → 12–15.
+        const bool odd = (pair & 1) != 0;
+        const auto neighbor = __shfl_xor_sync(0xffffffffU, odd ? lo : hi, 1, 4);
+        const uint2 values = odd ? make_uint2(neighbor, hi) : make_uint2(lo, neighbor);
+        const int slot = (pair >> 1) | ((pair & 1) << 1);
+        if (valid) *reinterpret_cast<uint2*>(p.out + offset + 4 * slot) = values;
+      }
+    }
+  }
+}
+
+template <int C, bool Gate, bool Packed, bool Cat, bool DirectRelu, int ChannelTiles>
 __device__ __forceinline__ void finish_tile(__half* s, const Params& p, const Params& cat, int x0, int y0,
-                                            int tid, int warp, int lane) {
+                                            int tid, int warp, int lane,
+                                            const Frag<Acc::kF16> (&acc)[2][kPoints][ChannelTiles],
+                                            int local_y, int channel) {
+  if constexpr (DirectRelu) {
+    static_assert(C == 48 && !Gate && !Cat);
+    store_relu48(p, acc, x0, y0, lane, local_y, channel);
+    return;
+  }
+  __syncthreads();
+  store_transform<C, Gate, Packed>(s, p, acc, tid, lane, local_y, channel);
+  __syncthreads();
   if constexpr (Gate) {
     vertical_gate<C, Packed>(s, p, x0, y0, warp, lane);
     __syncthreads();
@@ -239,7 +296,7 @@ __device__ __forceinline__ void finish_tile(__half* s, const Params& p, const Pa
 // Deux warps en C64 et trois en C48 partagent les canaux de sortie d'une paire. V reste dans les registres
 // à 64 canaux. À 48 canaux, le calcul partagé de V évite de le refaire à chaque prise horizontale.
 // Le masque reste celui des tuiles 32 × 8 de SPAN, deux rangées de blocs ici.
-template <int C, bool Gate, bool Flat, bool Cat, bool L1Input = false>
+template <int C, bool Gate, bool Flat, bool Cat, bool L1Input = false, bool DirectRelu = false>
 __device__ __forceinline__ void convolution_tile(Params p, Params cat) {
   static_assert(C == 48 || C == 64);
   constexpr bool Prepared = C == 48;
@@ -326,15 +383,12 @@ __device__ __forceinline__ void convolution_tile(Params p, Params cat) {
       for (int step = 0; step < kInner; ++step) accumulate(dx, step);
     }
   }
-  __syncthreads();
-  store_transform<C, Gate, Packed>(s, p, acc, tid, lane, local_y, channel);
-  __syncthreads();
-  finish_tile<C, Gate, Packed, Cat>(s, p, cat, x0, y0, tid, warp, lane);
+  finish_tile<C, Gate, Packed, Cat, DirectRelu>(s, p, cat, x0, y0, tid, warp, lane, acc, local_y, channel);
 }
 
-template <int C, bool Gate, bool Flat = false, bool L1Input = false>
+template <int C, bool Gate, bool Flat = false, bool L1Input = false, bool DirectRelu = false>
 __global__ void __launch_bounds__(kWorkers<C>, 3) convolution(Params p) {
-  convolution_tile<C, Gate, Flat, false, L1Input>(p, {});
+  convolution_tile<C, Gate, Flat, false, L1Input, DirectRelu>(p, {});
 }
 
 template <int C>

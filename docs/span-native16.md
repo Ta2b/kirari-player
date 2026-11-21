@@ -582,6 +582,22 @@ les écritures 32 bits et 3,769 ms avec celles de 64 bits. Sur Sharp1, qui garde
 direct, elles sont de 4,181, 4,077 et 4,178 ms. Les passages 32 bits sont au nombre de
 deux dans chaque cas. Le banc ne mesure ni la présentation ni l'attente de recyclage.
 
+Dans le lecteur Performance, 65,9 à 66,3 % des images calculées utilisent les tuiles.
+L'écriture 64 bits fait passer la médiane du corps de 3,34–3,46 à 3,24–3,30 ms et
+son p95 de 4,51–4,78 à 4,20–4,58 ms. En calcul dense, le p95 passe de 5,36–5,39 à
+5,12–5,17 ms. Wayland confirme environ 165 i/s dans tous ces passages à 180 i/s source.
+L'écriture 32 bits n'améliore pas régulièrement le temps du corps avec réemploi.
+
+Un relevé Nsight Compute couvre un graphe de 76 nœuds du corps Performance jusqu'au RGB,
+après 24 rejeux de chauffe. L'écriture 64 bits fait passer la durée profilée de 3,720
+à 3,585 ms, la DDR de 1 090,32 à 1 066,33 Mo et le L2 de 5 985,07 à 6 133,20 Mo.
+Le relevé omet la première convolution d'entrée et la composition. Il indique un
+échange de trafic entre la mémoire partagée du noyau et le L2, avec un temps total réduit.
+Sur le modèle Performance officiel à 1920×1080 sur Ada, le lecteur valide d'abord le
+Winograd vertical existant. Il ne retient ensuite l'écriture directe que si les trois
+bandes d'essai rendent les mêmes codes FP16 et si son temps médian baisse d'au moins 2 %.
+Le lecteur recompilé a retenu cette écriture à 3,49 ms contre 3,60 ms dans l'essai de chargement.
+
 ## Mesurer
 
 Le PC ne mesure que les temps ; la justesse se juge sur processeur, dans le cloud. Un seul banc, sur CachyOS,

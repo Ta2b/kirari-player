@@ -113,6 +113,8 @@ class SpanFp8Engine final : public Engine {
   SpanFp8Engine() = default;
   std::expected<bool, Refusal> try_vertical_net(const span_fp8::Package& package, SpanFp8Weights weights,
                                                 void* workspace);
+  std::expected<void, Refusal> try_direct_relu(SpanFp8Weights weights, void* workspace, int height,
+                                               int width);
   std::expected<void, Refusal> try_relu_net(SpanFp8Weights weights, void* workspace);
   std::expected<void, Refusal> validate_nets(const span_fp8::Package& package, const SpanFp8Weights& weights,
                                              void* workspace, bool native_blocks, bool vertical_winograd);
