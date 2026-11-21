@@ -140,8 +140,13 @@ std::string ChainEngines::motion_label(const PlaySettings& settings) const {
           ? i18n::tr_format(" · motion estimated at {}p (speed gain not measured)", estimated)
           : std::string();
   const std::string cadence = settings.rife_auto ? i18n::tr("Auto") : factor_text(factor_of(settings));
-  if (use_drba())
-    return std::format("DistilDRBA {}{}{} · ", cadence, drba_fused ? i18n::tr(" fused") : "", reduced);
+  if (use_drba()) {
+    const std::string_view implementation =
+        settings.experimental.rife_cuda_direct && backend_name == "tensorrt" ? i18n::tr(" · Direct CUDA")
+        : drba_fused                                                         ? i18n::tr(" fused")
+                                                                             : "";
+    return std::format("DistilDRBA {}{}{} · ", cadence, implementation, reduced);
+  }
   if (use_apple()) return std::format("Apple {} · VideoToolbox · ", cadence);
   if (gmfss_use == GmfssUse::Only) return std::format("GMFSS union {} · ", cadence);
   if ((rife || rife_motion) && rife_model) {
@@ -363,7 +368,7 @@ void note_drba_fused(ChainEngines& c, const DrbaFusedUse& fused, bool tried) {
   c.drba_fused = fused.used;
   c.drba_fused_refused = fused.refused;
   if (fused.used)
-    log_channel("app")->info("DistilDRBA fusionné : quatre moteurs et noyaux de colle");
+    log_channel("app")->info("DistilDRBA fusionné : quatre morceaux et noyaux de colle");
   else if (tried)
     log_channel("app")->warn("DistilDRBA fusionné indisponible ({}) : DistilDRBA entier", fused.declined);
 }
@@ -583,21 +588,21 @@ std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> build_drba(P
   return loaded;
 }
 
-// DistilDRBA à la place de RIFE, à la taille de travail ; RIFE reprend si son graphe manque. Un refus retenu
-// pour la séance (B08-02) passe à RIFE sans reconstruire. Faux : construction annulée ; vrai : chargé, ou
-// refusé avec RIFE (ou rien) à la place.
+// La voie mixte peut garder RIFE si DistilDRBA est refusé. Le choix CUDA direct propage le refus au lecteur.
+// Faux : préparation annulée ; vrai : chargée ou refusée avec le repli de la voie mixte.
 std::expected<bool, StageFailure> load_drba(Player& p, const gpu::BackendInit& init, ChainEngines& c,
                                             const PlaySettings& settings, InnerFallbacks& inner,
                                             const std::string& library) {
   const auto log = log_channel("app");
+  const bool direct = settings.experimental.rife_cuda_direct && c.backend_name == "tensorrt";
   const std::string drba_key = inner_key(std::format("drba {}", name(settings.motion_precision)), library, {},
                                          c.work.width, c.work.height);
-  if (inner.refused(ChainStage::Motion, drba_key) != nullptr) {
+  if (!direct && inner.refused(ChainStage::Motion, drba_key) != nullptr) {
     log->info("DistilDRBA refusé plus tôt dans la séance : {}", c.rife_model ? "RIFE" : "sans interpolation");
     return true;
   }
   const std::string fused_key = inner_key("drba-fused", library, {}, c.work.width, c.work.height);
-  DrbaFusedUse fused = drba_fused_use(c, settings, inner, fused_key);
+  DrbaFusedUse fused = direct ? DrbaFusedUse{} : drba_fused_use(c, settings, inner, fused_key);
   const bool try_fused = fused.declined.empty();
   auto loaded = build_drba(p, init, c, settings, try_fused ? &fused : nullptr);
   if (loaded && *loaded) {
@@ -606,7 +611,7 @@ std::expected<bool, StageFailure> load_drba(Player& p, const gpu::BackendInit& i
       inner.failed(ChainStage::Motion, fused_key, Refusal{*fused.refused, fused.declined});
   }
   // Annulée, la construction ne passe pas la main à RIFE : l'interpolation part, SPAN reste (A31-15).
-  if (!loaded && watch_now(loaded.error()))
+  if (!loaded && (direct || watch_now(loaded.error())))
     return stage_refused(std::move(loaded.error()), ChainStage::Motion);
   if (!loaded) {
     log->warn("{} ; {}", loaded.error().detail, c.rife_model ? "RIFE à la place" : "sans interpolation");

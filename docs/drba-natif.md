@@ -1,10 +1,39 @@
 # DistilDRBA en noyaux natifs
 
 Sur Ada en 1920×1088, la chaîne fusionnée peut utiliser le dernier bloc CUDA natif avec Winograd
-vertical. Le réglage « Dernier bloc DistilDRBA natif (essai) » sous Interpolation > Avancé > Essais
-est coché par défaut. Le décocher garde les trois blocs sous TensorRT. Même avec le réglage coché, le chargement
-garde TensorRT pour le dernier bloc lorsque les contrôles de rendu, de réemploi ou de durée échouent.
-Les premiers blocs et l'encodeur du lecteur utilisent toujours TensorRT. Le bloc 1 CUDA reste au banc.
+vertical. Dans la voie mixte, le réglage « Dernier bloc DistilDRBA natif (essai) » est coché par
+défaut. L'encodeur et les deux premiers blocs restent sous TensorRT. Le chargement y garde aussi le
+dernier bloc lorsque les contrôles de rendu, de réemploi ou de durée échouent.
+
+## Voie CUDA directe
+
+Le réglage facultatif « Interpolation CUDA directe (essai) » charge directement les poids officiels
+Équilibre du modèle en 1920 × 1088, avec les trois blocs et l'encodeur en CUDA. En lecture 1080p,
+cette forme s'obtient avec l'estimation du mouvement en pleine taille. Le backend vérifie les
+empreintes des quatre morceaux ONNX et la géométrie. Il ne construit ni ne compare de plan TensorRT
+pour DistilDRBA. Le module NVIDIA garde sa dépendance au runtime TensorRT pour les voies mixtes.
+Un refus de forme remonte au lecteur, qui peut poursuivre à la cadence source. Pour retrouver la
+voie mixte sur d'autres tailles, décocher l'essai.
+
+Sur deux trios réels et deux instants, le CUDA direct donne 78,85–81,56 dB RGB face à ONNX Runtime
+CPU, avec un écart maximum de 0,005371. L'écart maximal de flot vaut 0,125 pixel. Le réemploi du
+bloc B0 et le nouveau pavage des résidus B0/B1 conservent les 66 846 720 codes FP16 comparés.
+Le chargement isolé après création du backend et avec les modèles dérivés en cache passe de 625
+à 110 ms sur le premier prototype. Le banc du lecteur a aussi confirmé l'absence de plans Distil
+dans un cache d'artefacts vierge avec l'essai activé.
+
+| Graphe GPU à 1920 × 1088 | Mixte | CUDA direct | Borne Winograd + fusion | Part mixte → directe |
+| --- | ---: | ---: | ---: | ---: |
+| À froid, avec l'encodage des trois images | 0,704 ms | 0,772 ms | 0,197 ms | 28,00 % → 25,55 % |
+| Avec réemploi, nouvel instant | 0,488 ms | 0,600 ms | 0,166 ms | 33,94 % → 27,64 % |
+
+Le banc A/B/B/A mesure du premier noyau de préparation à la sortie flot/masque sur la RTX 4070 Ti.
+La borne conserve les sommes FP32 et suppose le Winograd F(2×2,3×3) et les fusions par bloc. En
+lecture ×8 avec SPAN Performance vers la 4K et composition Wayland, le mixte présente 164,788–165,000
+nouvelles images/s et le direct 164,999, sans abandon sur les quatre passages. Le mixte conserve
+l'avantage en temps GPU par interpolation.
+
+## Bancs des blocs et de l'encodeur
 
 Pour le bloc 0, un banc de convolution directe charge le halo de ses 192
 canaux une fois par bloc CUDA. Sur quatre entrées réelles, les huit états

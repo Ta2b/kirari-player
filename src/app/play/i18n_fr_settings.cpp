@@ -193,11 +193,14 @@ constexpr std::array kSettingsPages{
           "Écrit les caractéristiques déformées directement dans GridNet sur les NVIDIA RTX 40 "
           "compatibles en 1080p. Décocher rétablit la conversion séparée de leur disposition."},
     Entry{"Native DistilDRBA final block (test)", "Dernier bloc DistilDRBA natif (essai)"},
-    Entry{"Direct CUDA RIFE and GMFSS (test)", "RIFE et GMFSS CUDA direct (essai)"},
-    Entry{"Loads compatible RIFE and GMFSS models directly into CUDA kernels. "
-          "Skips building and comparing TensorRT plans for these models.",
-          "Charge les modèles RIFE et GMFSS compatibles directement dans les noyaux CUDA. "
-          "Évite la construction et la comparaison des plans TensorRT pour ces modèles."},
+    Entry{"Direct CUDA interpolation (test)", "Interpolation CUDA directe (essai)"},
+    Entry{"Loads compatible RIFE, GMFSS and DistilDRBA weights into CUDA kernels without "
+          "building or comparing TensorRT plans. DistilDRBA requires Balanced precision "
+          "and a 1920×1088 model input. In a 1080p video, turn off 720p motion estimation.",
+          "Charge les poids compatibles de RIFE, GMFSS et DistilDRBA dans les noyaux CUDA, "
+          "sans construire ni comparer les plans TensorRT. DistilDRBA demande le cran Équilibre "
+          "et une entrée modèle de 1920×1088. Sur une vidéo 1080p, désactivez l’estimation du mouvement en "
+          "720p."},
     Entry{"Tries the CUDA Winograd final block after a quality and speed check. Turning it off "
           "uses TensorRT for that block.",
           "Essaie le dernier bloc Winograd CUDA après contrôle de la qualité et de la vitesse. "

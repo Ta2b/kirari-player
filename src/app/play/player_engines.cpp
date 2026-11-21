@@ -402,6 +402,33 @@ void note_drba_fallback(const std::optional<DrbaModel>& found, int work_height) 
                            half ? "mouvement estimé moins finement" : "plus lent");
 }
 
+std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> prepare_distil_cuda(
+    Player& p, const gpu::BackendInit& init, gpu::Backend& backend, const std::optional<DrbaModel>& found,
+    int work_width, int work_height, int& align, PrecisionTier tier, DrbaFusedUse* fused) {
+  if (!found || tier != PrecisionTier::Balanced)
+    return std::unexpected(
+        Refusal{RefusalCode::FormatUnsupported,
+                "DistilDRBA CUDA direct : poids officiels et précision Équilibre attendus"});
+  align = found->align;
+  const auto g = kernels::rife_geometry(work_width, work_height, align);
+  if (g.padded_width != 1920 || g.padded_height != 1088)
+    return std::unexpected(
+        Refusal{RefusalCode::ShapeInvalid, "DistilDRBA CUDA direct : taille 1920×1088 attendue"});
+  const gpu::Shape shape{.dims = {1, kernels::kDistilDrbaInputPlanes, g.padded_height, g.padded_width}};
+  auto manifest = prepare::derive_drba_fused(found->path, paths::derived_models(p.paths), g.padded_height,
+                                             g.padded_width);
+  if (!manifest) return std::unexpected(std::move(manifest.error()));
+  auto engine = prepare_engine(p, init, backend, *manifest, shape,
+                               EngineLabel{.name = "DistilDRBA CUDA",
+                                           .model = core::to_utf8(found->path.stem()),
+                                           .width = g.padded_width,
+                                           .height = g.padded_height,
+                                           .first_build_s = 1.0},
+                               gpu::Lane::Interpolate);
+  if (engine && *engine && fused) fused->used = true;
+  return engine;
+}
+
 }  // namespace
 
 std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> prepare_distil_drba(
@@ -410,6 +437,8 @@ std::expected<std::optional<std::unique_ptr<gpu::Engine>>, Refusal> prepare_dist
     PrecisionTier tier, DrbaFusedUse* fused, bool* motion, bool image_elsewhere) {
   std::optional<DrbaModel> found = find_distil_drba(dirs, drba_half_flow(work_height));
   note_drba_fallback(found, work_height);
+  if ((init.trials & gpu::kRifeCudaDirect) != 0 && backend.capabilities().name == "tensorrt")
+    return prepare_distil_cuda(p, init, backend, found, work_width, work_height, align, tier, fused);
   if (found && tier != PrecisionTier::Balanced) {
     // Le cran rendu décide du fusionné, pas le cran demandé (A31-06, A31-07 : drba_fused_choice.h).
     const DrbaTier plan =

@@ -3,6 +3,7 @@
 // et fait un essai de toute la chaîne. Tout refus ici fait reprendre la chaîne sur le moteur DistilDRBA
 // entier (chain_setup.cpp) : l'ONNX d'origine n'est jamais touché.
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <format>
 #include <fstream>
@@ -20,6 +21,49 @@
 
 namespace kirari::gpu::cuda {
 namespace {
+
+constexpr std::string_view kCudaDirect = "distil-cuda-direct-v1";
+
+std::expected<std::array<RifeNativePiece, 4>, Refusal> direct_recipe(const std::filesystem::path& artifact) {
+  constexpr std::array<std::string_view, 4> fingerprints{
+      "3fc3070e6efd4fcee50e4c7033c379e95a34d15f8c0b3387f8d2b56bab5e28b8",
+      "0e5ae18e0c59a5e92974a8387f01585473267b42e328ebfb15e43c9f2b9bc769",
+      "43173dbe57b5db1c7636c47854f2e604feb0870597c9186c6236845d1ca6b85a",
+      "32fe601966d60e38af254b366a8b44808e82a02a8d1532cd2a07984a53a0432f"};
+  constexpr std::array input{3, 58, 109, 109};
+  constexpr std::array output{16, 52, 52, 52};
+  std::ifstream file(artifact, std::ios::binary);
+  const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+  const auto manifest = prepare::parse_drba_manifest(text);
+  if (!manifest || manifest->pieces.size() != fingerprints.size() || manifest->height != 1088 ||
+      manifest->width != 1920 || manifest->plan.tail != 4)
+    return refuse(RefusalCode::ShapeInvalid, "DistilDRBA CUDA direct : manifeste 1920×1088/4 invalide");
+  std::array<RifeNativePiece, 4> result;
+  for (std::size_t i = 0; i < result.size(); ++i) {
+    const auto path = artifact.parent_path() / core::path_from_utf8(manifest->pieces[i]);
+    auto bytes = prepare::read_onnx_bytes(path);
+    if (!bytes) return std::unexpected(std::move(bytes.error()));
+    const auto data = std::string_view(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+    if (prepare::sha256_hex(data) != fingerprints[i])
+      return refuse(RefusalCode::GraphInvalid,
+                    std::format("DistilDRBA CUDA direct : poids du morceau {} incompatibles", i));
+    auto layers = prepare::rife_native_layers(*bytes);
+    if (!layers || !prepare::rife_native_check(*layers, input[i], output[i]))
+      return refuse(RefusalCode::GraphInvalid,
+                    std::format("DistilDRBA CUDA direct : couches du morceau {} incompatibles", i));
+    for (auto& layer : *layers) {
+      result[i].push_back({.transposed = layer.transposed,
+                           .cin = layer.cin,
+                           .cout = layer.cout,
+                           .stride = layer.stride,
+                           .weights = std::move(layer.weights),
+                           .bias = std::move(layer.bias),
+                           .slope = std::move(layer.slope),
+                           .scale = std::move(layer.scale)});
+    }
+  }
+  return result;
+}
 
 RifeNativePiece native_tail_recipe(const std::filesystem::path& artifact, const DrbaFusedKey& key) {
   if (key.height != 1088 || key.width != 1920 || key.plan.tail != 4) return {};
@@ -53,6 +97,19 @@ RifeNativePiece native_tail_recipe(const std::filesystem::path& artifact, const 
   return native;
 }
 
+std::expected<Artifact, Refusal> direct_artifact(const ModelSpec& model,
+                                                 const prepare::DrbaFusedManifest& manifest,
+                                                 const Progress& progress) {
+  if (progress.stop.stop_requested()) return refuse(RefusalCode::Cancelled, "DistilDRBA CUDA direct annulé");
+  if (manifest.height != 1088 || manifest.width != 1920 || manifest.plan.tail != 4)
+    return refuse(RefusalCode::ShapeInvalid, "DistilDRBA CUDA direct : plan 1920×1088 à réduction 4 attendu");
+  const DrbaFusedKey key{.height = manifest.height,
+                         .width = manifest.width,
+                         .plan = manifest.plan,
+                         .engines = std::vector<std::string>(4, std::string(kCudaDirect))};
+  return Artifact{.cache_key = drba_fused_artifact_key(key), .path = model.onnx_path};
+}
+
 }  // namespace
 
 std::expected<Artifact, Refusal> TensorRtBackend::build_drba_fused(const ModelSpec& model,
@@ -74,6 +131,7 @@ std::expected<Artifact, Refusal> TensorRtBackend::build_drba_fused(const ModelSp
                               "demandée {}",
                               h, w, shape_text(shapes)));
   }
+  if (rife_cuda_direct_) return direct_artifact(model, *manifest, progress);
   // Un moteur publié doit se désérialiser ici : sinon le constructeur le refait.
   const prepare::EngineCheck check =
       [this](const std::filesystem::path& engine) -> std::expected<void, Refusal> {
@@ -128,6 +186,19 @@ std::expected<Artifact, Refusal> TensorRtBackend::build_drba_fused(const ModelSp
 std::expected<std::unique_ptr<Engine>, Refusal> TensorRtBackend::load_drba_fused(const Artifact& artifact) {
   const std::optional<DrbaFusedKey> key = drba_fused_artifact_key_parse(artifact.cache_key);
   if (!key) return refuse(RefusalCode::GraphInvalid, "DistilDRBA fusionné : clé d'artefact illisible");
+  const bool direct = std::ranges::all_of(key->engines, [](const auto& e) { return e == kCudaDirect; });
+  if (direct != rife_cuda_direct_)
+    return refuse(RefusalCode::GraphInvalid,
+                  "DistilDRBA : la clé de l'artefact ne correspond pas au moteur choisi");
+  if (direct) {
+    auto recipe = direct_recipe(artifact.path);
+    if (!recipe) return std::unexpected(std::move(recipe.error()));
+    auto engine =
+        DrbaFusedEngine::load_cuda(*key, arena(), *recipe, properties_.major == 8 && properties_.minor == 9);
+    if (!engine) return std::unexpected(std::move(engine.error()));
+    log(BackendLogLevel::Info, "DistilDRBA CUDA direct chargé : encodeur, B0, B1 et B2 en 1920×1088");
+    return std::unique_ptr<Engine>(std::move(*engine));
+  }
   const auto native_tail = drba_native_tail_ && properties_.major == 8 && properties_.minor == 9
                                ? native_tail_recipe(artifact.path, *key)
                                : RifeNativePiece{};

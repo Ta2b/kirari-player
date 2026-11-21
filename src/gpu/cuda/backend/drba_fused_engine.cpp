@@ -59,21 +59,67 @@ std::expected<std::unique_ptr<DrbaFusedEngine>, Refusal> DrbaFusedEngine::load(
   auto blocks = engine->load_blocks(runtime, cache_dir, key, shared);
   if (!blocks) return std::unexpected(std::move(blocks.error()));
   activation = std::max(activation, *blocks);
-  engine->layout_ = kernels::drba_fused_layout(key.plan, h, w);
-  if (engine->packed_tail_) {
-    const auto reduced_plane = static_cast<std::size_t>(h / t) * static_cast<std::size_t>(w / t);
-    const auto planar_tail = engine->layout_.x[kLastBlock];
-    engine->packed_x_ = planar_tail + kernels::drba_fused_align(58U * reduced_plane * 2U);
-    engine->layout_.y[kLastBlock] =
-        engine->packed_x_ + kernels::drba_fused_align(kPackedX2 * reduced_plane * 2U);
-    engine->layout_.bytes =
-        engine->layout_.y[kLastBlock] + kernels::drba_fused_align(kPackedY2 * (reduced_plane / 4U) * 2U);
-  }
+  engine->set_layout();
   engine->own_activation_ = activation;
   engine->scratch_offset_ = engine->scratch_offset_for(*shared);
   if (auto ok = engine->use_zone(shared); !ok) return std::unexpected(std::move(ok.error()));
 
   if (auto ok = engine->check_loaded(shared, native_tail); !ok) return std::unexpected(std::move(ok.error()));
+  return engine;
+}
+
+void DrbaFusedEngine::set_layout() {
+  layout_ = kernels::drba_fused_layout(plan_, height_, width_);
+  if (packed_tail_) {
+    const auto reduced_plane =
+        static_cast<std::size_t>(height_ / plan_.tail) * static_cast<std::size_t>(width_ / plan_.tail);
+    const auto planar_tail = layout_.x[kLastBlock];
+    packed_x_ = planar_tail + kernels::drba_fused_align(58U * reduced_plane * 2U);
+    layout_.y[kLastBlock] = packed_x_ + kernels::drba_fused_align(kPackedX2 * reduced_plane * 2U);
+    layout_.bytes = layout_.y[kLastBlock] + kernels::drba_fused_align(kPackedY2 * (reduced_plane / 4U) * 2U);
+  }
+  if (cuda_encode_) {
+    cuda_encode_offset_ = kernels::drba_fused_align(layout_.bytes);
+    layout_.bytes = cuda_encode_offset_ + kernels::drba_fused_align(DrbaBatchEncoder::scratch_bytes());
+  }
+}
+
+std::expected<std::unique_ptr<DrbaFusedEngine>, Refusal> DrbaFusedEngine::load_cuda(
+    const DrbaFusedKey& key, const std::shared_ptr<SharedActivations>& shared,
+    const std::array<RifeNativePiece, 4>& recipe, bool ada) {
+  if (!shared || key.width != 1920 || key.height != 1088 || key.plan.tail != 4)
+    return refuse(RefusalCode::ShapeInvalid, "DistilDRBA CUDA direct : plan 1920×1088 à réduction 4 attendu");
+  auto engine = std::unique_ptr<DrbaFusedEngine>(new DrbaFusedEngine());
+  engine->plan_ = key.plan;
+  engine->height_ = key.height;
+  engine->width_ = key.width;
+  engine->ada_1080p_ = ada;
+  engine->packed_tail_ = true;
+  engine->hot_glue_ = ada;
+  engine->hot_xor_ = ada;
+  engine->cold_glue_ = ada;
+
+  FusedScratch upload;
+  if (auto ok = cuda_check(cudaStreamCreateWithFlags(&upload.stream, cudaStreamNonBlocking),
+                           "DistilDRBA CUDA direct : voie des poids");
+      !ok)
+    return std::unexpected(std::move(ok.error()));
+  cudaError_t error = cudaSuccess;
+  engine->cuda_encode_ = DrbaBatchEncoder::create(recipe[0], error);
+  if (auto ok = cuda_check(error, "DistilDRBA CUDA direct : encodeur"); !ok)
+    return std::unexpected(std::move(ok.error()));
+  for (int block = 0; block < 2; ++block) {
+    engine->coarse_[static_cast<std::size_t>(block)] =
+        DrbaCoarseNative::create(block, recipe[static_cast<std::size_t>(block) + 1], upload.stream, error);
+    if (auto ok = cuda_check(error, std::format("DistilDRBA CUDA direct : bloc {}", block)); !ok)
+      return std::unexpected(std::move(ok.error()));
+  }
+  engine->tail_ = DrbaTailNative::create(recipe[3], upload.stream, error);
+  if (auto ok = cuda_check(error, "DistilDRBA CUDA direct : bloc 2"); !ok)
+    return std::unexpected(std::move(ok.error()));
+  engine->set_layout();
+  engine->scratch_offset_ = engine->scratch_offset_for(*shared);
+  if (auto ok = engine->use_zone(shared); !ok) return std::unexpected(std::move(ok.error()));
   return engine;
 }
 
@@ -251,20 +297,31 @@ std::expected<void, Refusal> DrbaFusedEngine::run(cudaStream_t stream,
   if (!times_only) {
     // L'encodeur lit les images réduites au début de X_2 et y écrit les encodages juste après.
     const std::size_t enc_plane = static_cast<std::size_t>(h / t) * static_cast<std::size_t>(w / t);
-    const Tensor images = fused_tensor(at(layout_.x[2]), 0, 3, h / t, w / t, 3);
-    const Tensor encoded = fused_tensor(at(layout_.x[2]), kernels::kDrbaFusedImagePlanes * enc_plane * 2U,
-                                        kernels::kDrbaFusedEncodeChannels, h / t, w / t, 3);
-    if (auto ok = encode_->enqueue_plain(stream, arena, std::span(&images, 1), std::span(&encoded, 1)); !ok)
-      return ok;
-    if (auto ok = cuda_check(launch_drba_post({.enc_height = h / t,
-                                               .enc_width = w / t,
-                                               .x2 = at_ptr(layout_.x[2]),
-                                               .x1 = at_ptr(layout_.x[1]),
-                                               .x0 = at_ptr(layout_.x[0])},
-                                              stream),
-                             "drba_post<<<>>>");
-        !ok)
-      return ok;
+    if (cuda_encode_) {
+      const auto offset = kernels::kDrbaFusedImagePlanes * enc_plane * 2U;
+      if (auto ok = cuda_check(
+              cuda_encode_->enqueue(stream, at_ptr(layout_.x[2]), at_ptr(layout_.x[2] + offset),
+                                    at_ptr(layout_.x[1] + offset / 4U), at_ptr(layout_.x[0] + offset / 16U),
+                                    at_ptr(cuda_encode_offset_)),
+              "DistilDRBA CUDA direct : encodeur");
+          !ok)
+        return ok;
+    } else {
+      const Tensor images = fused_tensor(at(layout_.x[2]), 0, 3, h / t, w / t, 3);
+      const Tensor encoded = fused_tensor(at(layout_.x[2]), kernels::kDrbaFusedImagePlanes * enc_plane * 2U,
+                                          kernels::kDrbaFusedEncodeChannels, h / t, w / t, 3);
+      if (auto ok = encode_->enqueue_plain(stream, arena, std::span(&images, 1), std::span(&encoded, 1)); !ok)
+        return ok;
+      if (auto ok = cuda_check(launch_drba_post({.enc_height = h / t,
+                                                 .enc_width = w / t,
+                                                 .x2 = at_ptr(layout_.x[2]),
+                                                 .x1 = at_ptr(layout_.x[1]),
+                                                 .x0 = at_ptr(layout_.x[0])},
+                                                stream),
+                               "drba_post<<<>>>");
+          !ok)
+        return ok;
+    }
     // Le dernier bloc natif lit directement les plans fixes à la sortie de l'encodeur.
     if (packed_tail_ && !tail_) {
       if (auto ok = cuda_check(
@@ -316,14 +373,23 @@ std::expected<void, Refusal> DrbaFusedEngine::run_blocks(cudaStream_t stream,
         return ok;
       break;
     }
-    const kernels::DrbaFusedDims x = kernels::drba_fused_x(plan_, b, h, w);
-    const kernels::DrbaFusedDims y = kernels::drba_fused_y(plan_, b, h, w);
-    const auto in = packed_tail_ && b == kLastBlock ? packed_x_ : layout_.x[i];
-    const Tensor block_in = fused_tensor(at(in), 0, x.channels, x.height, x.width);
-    const Tensor block_out = fused_tensor(at(layout_.y[i]), 0, y.channels, y.height, y.width);
-    if (auto ok = blocks_[i]->enqueue_plain(stream, arena, std::span(&block_in, 1), std::span(&block_out, 1));
-        !ok)
-      return ok;
+    if (cuda_encode_) {
+      if (auto ok =
+              cuda_check(coarse_[i]->enqueue(stream, at_ptr(layout_.x[i]), at_ptr(layout_.y[i]), times_only),
+                         "DistilDRBA CUDA direct : bloc intermédiaire");
+          !ok)
+        return ok;
+    } else {
+      const kernels::DrbaFusedDims x = kernels::drba_fused_x(plan_, b, h, w);
+      const kernels::DrbaFusedDims y = kernels::drba_fused_y(plan_, b, h, w);
+      const auto in = packed_tail_ && b == kLastBlock ? packed_x_ : layout_.x[i];
+      const Tensor block_in = fused_tensor(at(in), 0, x.channels, x.height, x.width);
+      const Tensor block_out = fused_tensor(at(layout_.y[i]), 0, y.channels, y.height, y.width);
+      if (auto ok =
+              blocks_[i]->enqueue_plain(stream, arena, std::span(&block_in, 1), std::span(&block_out, 1));
+          !ok)
+        return ok;
+    }
     if (b + 1 < kernels::kDrbaFusedBlocks) {
       const kernels::DrbaFusedDims next = kernels::drba_fused_x(plan_, b + 1, h, w);
       const DrbaGlueParams glue{

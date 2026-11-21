@@ -20,6 +20,8 @@
 #include <vector>
 
 #include "gpu/backend.h"
+#include "gpu/cuda/backend/drba_coarse_native.h"
+#include "gpu/cuda/backend/drba_encoder_batch.h"
 #include "gpu/cuda/backend/drba_tail_native.h"
 #include "gpu/cuda/backend/fused_graphs.h"
 #include "gpu/cuda/backend/fused_keys.h"
@@ -42,6 +44,9 @@ class DrbaFusedEngine final : public Engine {
   static std::expected<std::unique_ptr<DrbaFusedEngine>, Refusal> load(
       nvinfer1::IRuntime& runtime, const std::filesystem::path& cache_dir, const DrbaFusedKey& key,
       const std::shared_ptr<SharedActivations>& shared, std::span<const RifeNativeConv> native_tail);
+  static std::expected<std::unique_ptr<DrbaFusedEngine>, Refusal> load_cuda(
+      const DrbaFusedKey& key, const std::shared_ptr<SharedActivations>& shared,
+      const std::array<RifeNativePiece, 4>& recipe, bool ada);
   ~DrbaFusedEngine() override;
   DrbaFusedEngine(const DrbaFusedEngine&) = delete;
   DrbaFusedEngine& operator=(const DrbaFusedEngine&) = delete;
@@ -99,7 +104,11 @@ class DrbaFusedEngine final : public Engine {
                                                       const std::shared_ptr<SharedActivations>& arena,
                                                       std::span<const RifeNativeConv> recipe);
 
+  void set_layout();
   std::unique_ptr<TrtEngine> encode_;
+  std::unique_ptr<DrbaBatchEncoder> cuda_encode_;
+  std::array<std::unique_ptr<DrbaCoarseNative>, 2> coarse_;
+  std::size_t cuda_encode_offset_ = 0;
   std::array<std::unique_ptr<TrtEngine>, kernels::kDrbaFusedBlocks> blocks_;
   std::unique_ptr<DrbaTailNative> tail_;
   std::string tail_notice_;

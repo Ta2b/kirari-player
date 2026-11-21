@@ -632,19 +632,21 @@ void motion_advanced(PlaySettings& d, const SettingsChoices& choices, bool expor
                "RIFE only; Smooth held drawings replaces it."));
   pair_scale_checkbox(d);
   strong_middle_checkbox(d);
-  if (choices.tensor_cores && d.motion_engine == MotionEngine::DistilDrba) {
+  const bool distil = d.motion_engine == MotionEngine::DistilDrba;
+  const bool cuda_interpolation = choices.tensor_cores && choices.engine_in_use == core::EngineId::TensorRt;
+  if (cuda_interpolation && (d.motion_engine == MotionEngine::Rife || gmfss || distil)) {
+    ImGui::Checkbox(i18n::tr("Direct CUDA interpolation (test)"), &d.experimental.rife_cuda_direct);
+    panel::tip(i18n::tr("Direct CUDA interpolation (test)"),
+               i18n::tr("Loads compatible RIFE, GMFSS and DistilDRBA weights into CUDA kernels without "
+                        "building or comparing TensorRT plans. DistilDRBA requires Balanced precision "
+                        "and a 1920×1088 model input. In a 1080p video, turn off 720p motion estimation."),
+               panel::Apply::Reload);
+  }
+  if (choices.tensor_cores && distil && !(cuda_interpolation && d.experimental.rife_cuda_direct)) {
     ImGui::Checkbox(i18n::tr("Native DistilDRBA final block (test)"), &d.experimental.drba_native_tail);
     panel::tip(i18n::tr("Native DistilDRBA final block (test)"),
                i18n::tr("Tries the CUDA Winograd final block after a quality and speed check. Turning it off "
                         "uses TensorRT for that block."),
-               panel::Apply::Reload);
-  }
-  if (choices.tensor_cores && choices.engine_in_use == core::EngineId::TensorRt &&
-      (d.motion_engine == MotionEngine::Rife || gmfss)) {
-    ImGui::Checkbox(i18n::tr("Direct CUDA RIFE and GMFSS (test)"), &d.experimental.rife_cuda_direct);
-    panel::tip(i18n::tr("Direct CUDA RIFE and GMFSS (test)"),
-               i18n::tr("Loads compatible RIFE and GMFSS models directly into CUDA kernels. "
-                        "Skips building and comparing TensorRT plans for these models."),
                panel::Apply::Reload);
   }
   if (choices.tensor_cores && d.motion_engine == MotionEngine::Rife) {
