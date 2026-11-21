@@ -188,6 +188,33 @@ avec reprise passe de 10,57 à 10,39 ms, son p95 de 11,66 à 11,79 ms. Le p95 du
 d'interpolation complet passe de 18,54 à 19,09 ms. Cet A/B ne démontre pas un gain composé
 reproductible. La variante reste au banc.
 
+Sur deux convolutions C64 avec poids et activations réels à 960×576, le chargement du halo
+peut laisser les 16 octets copiés dans le L1. Avec la géométrie de huit rangées par bloc,
+un second relevé passe de 0,384 à 0,377 ms pour la couche avec PReLU et de 0,533 à 0,530 ms
+pour la couche résiduelle. Les 35 389 440 codes FP16 sont identiques sur chaque couche,
+ainsi que les 609 600 codes sur un recadrage 127×75. Mettre en cache les seules zones de
+recouvrement ou rapprocher les tuiles voisines dans la grille donne des temps variables.
+
+Après 48 lancements de chauffe, une capture Nsight Compute R2 par chemin donne les
+volumes suivants. `cp.async.ca` peut servir les copies depuis le L1, sur le même ordre
+de sommes que `cp.async.cg`. [Référence PTX de NVIDIA](https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async).
+
+| Couche | L2, témoin → L1 | DDR, témoin → L1 | Borne des octets et du calcul, témoin → L1 |
+| --- | ---: | ---: | ---: |
+| C64 avec PReLU | 375,25 → 347,56 Mo | 138,35 → 138,34 Mo | 0,274 → 0,274 ms |
+| C64 avec résiduel | 446,33 → 400,47 Mo | 226,59 → 219,29 Mo | 0,450 → 0,435 ms |
+
+Les bornes prennent le maximum entre les octets mesurés à 504 Go/s en DDR et
+2,748 To/s en L2, et les 40,77 GFLOP à 160,4 TFLOP/s. Le profil du résiduel dure
+1,066 et 1,002 ms. Ces durées profilées appartiennent à deux lancements isolés
+et diffèrent du banc itéré ci-dessus. Le tableau ne couvre que ces deux couches.
+
+Pour une pente de PReLU représentable exactement en FP16, le produit de deux demi-flottants
+finis tient dans le format FP32 avant son arrondi. Le banc compare les 65 536 motifs pour la
+pente 0,204345703125. Le calcul par paires FP16 ne donne aucun écart hors NaN et diffère
+sur 2 045 codages NaN. Les deux sorties de convolution réelles gardent leurs bits, avec un
+temps plus long sur certaines tuiles. Le chemin de production garde son PReLU et ses copies.
+
 ### Projections directes dans GridNet
 
 L'option « Projections GMFSS directes (essai) » dans Interpolation > Avancé, ou

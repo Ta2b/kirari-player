@@ -233,6 +233,14 @@ native réemployée passe de 10,61 à 10,53 ms. Le p95 de l'interpolation passe 
 choisit des noyaux et une composition de queue différents pour GridNet entre les passages.
 Le candidat reste au banc.
 
+Le calcul rapide de l'attention peut omettre la lecture des identifiants de région sur
+les fenêtres dont toutes les positions valides appartiennent à une région. Cela couvre
+64 fenêtres sur 64 sans décalage et 49 sur 64 avec décalage, au quart en 1080p. Les clés
+de bourrage gardent leur masque. Sur une capture de B0 et une de B5, la première variante
+garde les 4 423 680 codes FP16 de chacune. Avec un second lancement dédié aux bords, B5
+passe d'une médiane de 62,4 µs à 69,5 µs. Les temps de B0 se recouvrent. Le gain de
+lectures partagées ne se traduit pas par un gain de temps reproductible dans ce banc.
+
 ```sh
 python3 tools/gmfss/gmflow_natif_couts.py --width 1920 --height 1152 --scale 0.5 \
   --plancher --reprise --winograd --rapide

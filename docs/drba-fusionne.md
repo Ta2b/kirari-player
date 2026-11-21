@@ -57,6 +57,11 @@ tient dans six noyaux.
   la colle de 41,83 à 31,93 µs et le bloc de 174,71 à 164,49 µs. Une géométrie réutilisant les
   fragments de poids sur deux groupes de pixels réduit aussi le corps natif de 117,72 à 100,01 µs
   dans son essai apparié. Le bloc TensorRT reste plus rapide que ces deux candidats.
+- Un banc du bloc 0 (C192 à 30×17) donne à chaque bloc CUDA 64 canaux de sortie au lieu de
+  192. Il passe de 18 à 54 blocs CUDA, avec le même Winograd vertical. Les huit états
+  intermédiaires et les 106 080 codes de sortie par capture sont identiques au natif large.
+  La médiane du bloc complet passe de 165,6 à 153,6 µs. TensorRT prend 82,0 µs dans le même
+  banc. La comparaison porte sur quatre activations réelles et une mire, hors lecteur.
 - En lecture Wayland 1080p, une capture Nsight Systems à ×2 mesure 70 relectures du même graphe de
   51 nœuds, à 1,029 ms de médiane. La somme des durées des noyaux atteint 1,028 ms, avec 1,3 µs d'écart
   médian entre la durée du graphe et celle de ses noyaux. La colle d'entrée (0,158 ms) et le rangement

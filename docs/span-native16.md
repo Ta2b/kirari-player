@@ -572,6 +572,16 @@ l'écriture. Sur 8,27 s de présentations datées, Wayland confirme 140,67 et 14
 avec l'avance, contre 135,12 et 140,74 sans. L'écart du premier tour ne se retrouve
 pas au second et le p95 des intervalles reste variable. Le réglage reste un essai CLI.
 
+Sur C48, deux écritures directes évitent le passage des sorties de ReLU Winograd par la
+mémoire partagée. La première écrit des paires FP16 de 32 bits. La seconde échange un
+mot avec la lane voisine et écrit 64 bits par lane dans un secteur commun. Les deux
+retirent les mêmes deux barrières et reproduisent les 24 883 200 codes au bout du réseau
+4K, ainsi que les formes impaires et les bandes masquées du banc. Sur Performance dense,
+les médianes CUDA des cinq blocs sont de 3,902 ms avec la sortie partagée, 3,765 ms avec
+les écritures 32 bits et 3,769 ms avec celles de 64 bits. Sur Sharp1, qui garde son C2
+direct, elles sont de 4,181, 4,077 et 4,178 ms. Les passages 32 bits sont au nombre de
+deux dans chaque cas. Le banc ne mesure ni la présentation ni l'attente de recyclage.
+
 ## Mesurer
 
 Le PC ne mesure que les temps ; la justesse se juge sur processeur, dans le cloud. Un seul banc, sur CachyOS,
