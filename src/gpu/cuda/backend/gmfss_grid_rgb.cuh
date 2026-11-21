@@ -81,9 +81,9 @@ __global__ void __launch_bounds__(rn::kThreads, 2) conv_rgb(rn::Params p) {
   rgb<Kc, Rows, A, false>(p, 0, p.oh, reinterpret_cast<__half*>(shared));
 }
 
-template <int Kc>
+template <int Kc, rn::Acc A = rn::Acc::kF32>
 __global__ void __launch_bounds__(rn::kThreads, 2) conv_rgb_ring(rn::Params p, int first_y, int last_y) {
   extern __shared__ __align__(16) unsigned char shared[];
-  rgb<Kc, 2, rn::Acc::kF32, true>(p, first_y, last_y, reinterpret_cast<__half*>(shared));
+  rgb<Kc, 2, A, true>(p, first_y, last_y, reinterpret_cast<__half*>(shared));
 }
 }  // namespace kirari::gpu::cuda::gmfss_grid_rgb

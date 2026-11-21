@@ -16,8 +16,8 @@ static_assert((kRingRows & (kRingRows - 1)) == 0);
 // Chaque pixel de PixelShuffle est écrit une fois. La dernière convolution lit jusqu'à la
 // première ligne de la bande suivante, conservée dans l'anneau avec le halo du haut.
 template <int Kc>
-void enqueue(rn::Params first, const rn::Params& last, cudaStream_t stream) {
-  constexpr int shared_a = gmfss_shuffle_reuse::smem_bytes<1>();
+void enqueue(rn::Params first, const rn::Params& last, cudaStream_t stream, bool sum_f32 = true) {
+  constexpr int shared_a = gmfss_shuffle_reuse::smem_bytes<1, true>();
   constexpr int shared_b = rn::smem_bytes(Kc, 16, 3, 1, 2);
   const auto groups = [](int n, int tile) { return static_cast<unsigned>((n + tile - 1) / tile); };
   const int height = first.oh;
@@ -32,7 +32,11 @@ void enqueue(rn::Params first, const rn::Params& last, cudaStream_t stream) {
       produced = need;
     }
     const dim3 blocks(groups(last.ow, rn::kTW), groups(end - y, kOutputTile));
-    gmfss_grid_rgb::conv_rgb_ring<Kc><<<blocks, rn::kThreads, shared_b, stream>>>(last, y, end);
+    if (sum_f32)
+      gmfss_grid_rgb::conv_rgb_ring<Kc><<<blocks, rn::kThreads, shared_b, stream>>>(last, y, end);
+    else
+      gmfss_grid_rgb::conv_rgb_ring<Kc, rn::Acc::kF16>
+          <<<blocks, rn::kThreads, shared_b, stream>>>(last, y, end);
   }
 }
 }  // namespace kirari::gpu::cuda::gmfss_grid_tail

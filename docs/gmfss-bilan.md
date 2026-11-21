@@ -215,6 +215,46 @@ pente 0,204345703125. Le calcul par paires FP16 ne donne aucun écart hors NaN e
 sur 2 045 codages NaN. Les deux sorties de convolution réelles gardent leurs bits, avec un
 temps plus long sur certaines tuiles. Le chemin de production garde son PReLU et ses copies.
 
+Dans l'anneau de PixelShuffle, les deux phases peuvent écrire par groupes de quatre
+canaux, en échangeant des paires FP16 entre voisines du même warp. Le tampon de sortie
+de 18 432 octets partagés et les synchronisations entre phases disparaissent. Au banc
+avec le vrai GridNet, la queue conserve les 6 635 520 codes RGB à 960×576 et les
+6 284 292 codes à 947×553. Ses médianes passent de 1,938 à 1,781 ms et de 1,754 à
+1,633 ms respectivement. Le regroupement de deux pixels RGB dans le même MMA réduit
+le nombre de produits lancés d'un tiers et conserve aussi ces codes. Son chronomètre
+K32 à 960×576 augmente de 1,732 à 1,786 ms sur la queue déjà sans tampon de sortie.
+La variante RGB reste au banc.
+
+L'anneau avec écritures directes est retenu par le contrôle de parité intégrale
+du lecteur avec une tête FP32 K32 et, dans un essai ciblé, une tête FP16 K64.
+Il accepte la précision de la queue choisie au réglage et garde son regroupement K.
+Sur la queue FP32, la voie retenue passe de 2,701 à 2,017 ms en direct et de 2,557
+à 2,159 ms sous graphe face au dense. Sur la queue FP16, elle passe de 2,613 à
+2,026 ms en direct et de 2,647 à 2,007 ms sous graphe. La queue composée est éteinte
+pour ces mesures. Le passage FP32 sur une source à 48 i/s en ×2 donne 35,36 i/s
+nouvelles confirmées par Wayland, avec 148 retours sur 148 dans la fenêtre centrale.
+Le passage FP16 donne 36,56 i/s avec 155 retours sur 155. Ces cadences incluent les
+autres étages GMFSS et la composition. Les deux passages sélectionnent des précisions
+différentes en tête et servent à vérifier les deux chemins dans le lecteur.
+
+### Lecture des poids des MLP de GMFlow
+
+Lire directement les fragments de poids via le cache retire 96 synchronisations par
+bloc dans les cinq MLP rapides au quart. Sur deux entrées réelles des couches B0 et
+B1, les 4 423 680 sorties FP16 gardent les mêmes bits. Les gains appariés au banc sont
+de 18,3 et 15,0 µs, avec un bruit témoin contre lui-même de 1,4 et 0,5 µs. Au rejeu
+chaud de la paire entière, les gains appariés sont de +0,053, −0,274 et +0,467 ms sur
+trois triplets. Les neuf tenseurs de sortie sont identiques en reprise et à froid,
+mais le gain ne se reproduit pas sur toutes les scènes. Sur le MLP FP32 B5, les
+sorties FP16 sont également identiques et le gain apparié de 13 µs reste dans le
+bruit du témoin de 24 µs. Les deux variantes restent au banc.
+
+Un tampon double qui publie les poids par trois étapes est également exact après
+avoir attendu la copie du résiduel avant sa première lecture. Il ramène les barrières
+de 96 à 64 par bloc, avec 48 Kio partagés au lieu de 40 et deux blocs résidents par SM.
+Sur B0 et B1, les médianes appariées se dégradent de 2,5 et 1,1 µs. Le MLP garde
+ses chargements actuels.
+
 ### Projections directes dans GridNet
 
 L'option « Projections GMFSS directes (essai) » dans Interpolation > Avancé, ou

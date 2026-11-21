@@ -489,6 +489,28 @@ garde également les mêmes codes. Les minima du réseau Balanced passent de 7,9
 à 9,88–9,92 ms. Cette forme ajoute des barrières, et la taille du tampon la limite à
 deux blocs résidents par SM.
 
+Deux autres variantes C64 ont été comparées à 1080p sur Ada. Les écritures ReLU par
+groupes de quatre canaux suppriment deux synchronisations et donnent un gain dense
+irrégulier. Faire traiter deux paires de lignes par warp divise les chargements de poids
+dans la boucle, sans agrandir le halo brut de 29 376 octets. Les chargements du halo
+par `ldmatrix` augmentent de moitié. Cette forme passe de 8,407 à 8,469 ms sur Balanced
+et de 8,362 à 8,499 ms sur Sharp1 Balanced au banc dense. Avec un panoramique et ses
+masques, elle passe de 5,619 à 5,688 ms et de 5,257 à 5,298 ms.
+Les deux variantes gardent tous les bits de chaque sortie RGB 4K testée sur les deux
+modèles, en bandes de 128 ou 127 lignes, avec masques et avec réemploi décalé. Les
+mesures ont été faites au banc CUDA et les deux variantes y restent.
+
+Un dépouillement sur processeur des seize sorties ReLU de Balanced couvre deux
+images d'anime et deux recadrages 384×256 par image. Les cartes après ReLU contiennent
+47 à 49 % de zéros. Pour utiliser `mma.sp` sans supprimer de valeur, chaque groupe
+de quatre coefficients du fragment doit contenir au plus deux valeurs non nulles.
+Parmi les fragments d'activation M16×K32 des convolutions, de 0,008 à 6,31 %
+remplissent cette condition avant les transformées verticales et de 0 à 12,15 %
+après. Ces valeurs proviennent de sorties ONNX et de transformées FP16 sur CPU.
+Elles bornent l'intérêt d'une compression dynamique par fragment, avant même
+le coût de la détection et du rangement des métadonnées. [Règles de mma.sp dans
+l'ISA PTX](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#sparse-matrix-storage).
+
 Sur Ada en 1080p dense, les deux Balanced laissent les halos voisins dans le L1 lors de la
 copie asynchrone de la convolution verticale déroulée. Les poids gardent leur chemin. Les
 deux images du banc Balanced gardent les mêmes codes sur toute la sortie 4K. Les minima

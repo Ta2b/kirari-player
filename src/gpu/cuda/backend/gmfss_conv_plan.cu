@@ -185,9 +185,10 @@ void launch_rgb(cudaStream_t stream, const Shape& shape, rn::Params p) {
   }
 }
 
-bool supports_rgb(const Layer& layer, const Shape& shape) {
+bool supports_rgb(const Layer& layer, const Shape& shape, bool ring = false) {
   const rn::Config& cfg = shape.cfg;
-  return layer.rgb && cfg.ct == 16 && cfg.rows == 2 && cfg.ksplit == 1 && cfg.bands == 0 && !cfg.ahead &&
+  const bool rows = cfg.rows == 2 || (ring && cfg.rows == 1 && layer.sums == RifeNativeSums::kF16);
+  return layer.rgb && cfg.ct == 16 && rows && cfg.ksplit == 1 && cfg.bands == 0 && !cfg.ahead &&
          (cfg.kc == 16 || cfg.kc == 32 || cfg.kc == 64);
 }
 
@@ -400,10 +401,11 @@ bool ConvNet::tail_ready() const {
   const Placed& scratch = tensor(first.to);
   const auto bytes =
       std::int64_t{gmfss_grid_tail::kRingRows} * last.iw * 64 * static_cast<std::int64_t>(sizeof(__half));
+  const bool sums = last.sums == RifeNativeSums::kF32 || last.sums == RifeNativeSums::kF16;
   return first.piece == last.piece && shuffle_ring_source(first) && last.from == first.to &&
          last.ih == 2 * first.oh && last.iw == 2 * first.ow && last.cin == 64 && last.in_ld == 64 &&
-         last.skip < 0 && last.in_slope == 1.F && last.sums == RifeNativeSums::kF32 &&
-         supports_rgb(last, last.shape()) && scratch.external < 0 && scratch.first == static_cast<int>(i) &&
+         last.skip < 0 && last.in_slope == 1.F && sums && supports_rgb(last, last.shape(), true) &&
+         scratch.external < 0 && scratch.first == static_cast<int>(i) &&
          scratch.last == static_cast<int>(i + 1) && scratch.bytes >= bytes;
 }
 
@@ -487,15 +489,16 @@ bool ConvNet::run(cudaStream_t stream, void* zone, float* partial, std::span<con
       rn::Params shuffle = p;
       shuffle.w = layer.packs[pack_index(64)].as<const uint4>();
       shuffle.tiles = 1;
+      const bool sum_f32 = head.sums == RifeNativeSums::kF32;
       switch (head.shape().cfg.kc) {
         case 16:
-          gmfss_grid_tail::enqueue<16>(shuffle, q, stream);
+          gmfss_grid_tail::enqueue<16>(shuffle, q, stream, sum_f32);
           break;
         case 32:
-          gmfss_grid_tail::enqueue<32>(shuffle, q, stream);
+          gmfss_grid_tail::enqueue<32>(shuffle, q, stream, sum_f32);
           break;
         case 64:
-          gmfss_grid_tail::enqueue<64>(shuffle, q, stream);
+          gmfss_grid_tail::enqueue<64>(shuffle, q, stream, sum_f32);
           break;
       }
       written = true;
