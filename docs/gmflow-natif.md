@@ -39,6 +39,20 @@ lecteur, deux passages Wayland par variante donnent 24,94–27,50 puis
 27,22–28,06 nouvelles images/s. La dispersion des passages limite
 l'interprétation de ce gain de cadence.
 
+### Attention stricte au quart sur Ada
+
+Le chemin FP32 à 72 × 120 réutilise deux tables d'indices de fenêtres, avec et sans décalage,
+soit 67,5 Kio. Le calcul et les arrondis restent identiques. Les chemins des autres tailles et
+cartes gardent leur prédicat existant. Un échec d'allocation garde le calcul des indices dans
+le noyau. `KIRARI_AB_GMFLOW_ATTN_STRICT_QUARTER=0` rétablit ce calcul pour le banc.
+
+Les trois triplets et les cinq états de la paire donnent 209 433 600 codes identiques. Avec
+les poids MLP partagés des deux côtés du banc, le GMFlow isolé passe de 7,079 à 6,808 ms à
+froid (74,73 % → 77,70 % de 5,29 ms) et de 6,614 à 6,380 ms avec réemploi de A
+(74,84 % → 77,59 % de 4,95 ms). Dans le lecteur GMFSS seul sous Wayland, deux passages
+par variante donnent 27,0–29,3 puis 25,3–31,8 nouvelles images/s. La dispersion des passages
+empêche de conclure sur le gain de cadence à l'écran.
+
 Le contrôle au chargement garde le flot TensorRT FP16 avec 39,3 dB sur `motion1_1` pour 45 dB requis.
 Sur une vraie paire à fort mouvement, le même suffixe MetricNet/GridNet rend environ 50 dB dans la
 comparaison avec TensorRT. Les écarts les plus visibles restent sur le contour en mouvement. Le banc

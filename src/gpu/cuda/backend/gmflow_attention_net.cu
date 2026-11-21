@@ -116,6 +116,11 @@ std::vector<std::uint32_t> window_indices(ga::Grid g, bool shifted) {
   return indices;
 }
 
+bool strict_quarter_indexed() {
+  const char* choice = std::getenv("KIRARI_AB_GMFLOW_ATTN_STRICT_QUARTER");  // env: banc
+  return choice == nullptr || std::strcmp(choice, "0") != 0;
+}
+
 struct Layer {
   Buffer qkv, merge, gamma, beta;
   bool shifted = false;
@@ -129,7 +134,8 @@ class Net final : public GmflowAttentionNet {
     const int s = a.splits[static_cast<std::size_t>(scale)];
     grid_ = {.height = height, .width = width, .splits = s, .wh = height / s, .ww = width / s};
     grid_.length = grid_.wh * grid_.ww;
-    const bool indexed_quarter = fast_ && scale == 1 && height == 72 && width == 120 && s == 8;
+    const bool indexed_quarter =
+        scale == 1 && height == 72 && width == 120 && s == 8 && (fast_ || strict_quarter_indexed());
     const bool indexed_eighth = !fast_ && scale == 0 && height == 36 && width == 60 && s == 2;
     if (indexed_quarter || indexed_eighth) {
       int device = 0;
