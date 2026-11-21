@@ -295,6 +295,23 @@ Balanced et la composition Wayland, les quatre passages de 4.25 donnent
 165,00 nouvelles images/s sans abandon. Lite donne 164,76–165,00 nouvelles
 images/s, avec un abandon sur un passage de chaque variante.
 
+Le relèvement D1 spécialisé sur Ada groupe maintenant les quatre composantes du flot et
+les huit attributs par parité de PixelShuffle en mémoire partagée. La colle charge ainsi
+plusieurs composantes par voisin, sans changer les prises bilinéaires ni l'ordre des
+sommes FP32. Sur le même périmètre du graphe avec réencodage de B, les comparaisons
+appariées donnent les mesures suivantes.
+
+| CUDA direct | Colle D1 | Graphe GPU | Même palier Winograd + fusion |
+| --- | ---: | ---: | ---: |
+| RIFE 4.25 | 389,73 → 363,92 µs | 2,6193 → 2,5749 ms | 23,20 % → 23,60 % |
+| RIFE 4.22 Lite | 375,20 → 348,86 µs | 2,5160 → 2,4967 ms | 24,99 % → 25,19 % |
+
+Lite inclut une répétition de la série et conserve un graphe atypique où une autre
+convolution a ralenti. Les six sorties complètes sont identiques bit à bit. En lecture
+avec SPAN Balanced et composition Wayland, les huit passages donnent 164,998–165,000
+nouvelles images/s et zéro abandon. Les variantes compilent pour Turing, Ampere, Ada
+et Blackwell.
+
 ### Répartition de l'écart sur le graphe CUDA direct
 
 Les deux captures avec la colle D1 spécialisée sont regroupées par frontières de blocs. Le chronométrage
@@ -334,6 +351,33 @@ avec des tuiles et leur halo conservés entre plusieurs couches, retire des écr
 FP16, l'addition résiduelle et la pente doivent rester au même endroit pour comparer la qualité. Une
 seconde brique doit réduire les colles multi-échelles et les petites convolutions D8/D4. La mesurer
 séparément montre si le gain sur D1 et D2 se transmet au graphe entier.
+
+### Audit du premier essai de fusion D1
+
+La RTX 4070 Ti rejoue les huit résidus C32 de 4.25 sur une activation 480 × 272 réelle. La tuile
+directe garde 30 × 6 pixels utiles par paire, et la tuile Winograd 12 × 12 afin de conserver toutes
+les données de la même fenêtre F2 aux coutures. Chaque fusion conserve les bits des huit sorties
+intermédiaires comparées à sa propre recette séparée. Winograd change les valeurs face au direct.
+Sur les deux modèles à taille entière, le RMS de l'activation finale est de 0,00031 à 0,00036 et le
+maximum de 0,00854 à 0,01392. Le banc porte sur les activations GPU, avant la reconstruction vidéo.
+
+| Huit résidus D1 | Noyaux | GFLOP Tensor | Instructions warp (millions) | L2 | DDR |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct résident | 8 | 19,25 | 35,67 | 255,06 Mo | 25,16 Mo |
+| Direct par paires | 4 | 27,78 | 42,81 | 230,24 Mo | 27,66 Mo |
+| Winograd F2 séparé | 8 | 8,56 | 98,49 | 269,23 Mo | 34,48 Mo |
+| Winograd F2 par paires | 4 | 15,44 | 163,52 | 275,33 Mo | 34,63 Mo |
+
+Les octets et les instructions viennent de captures Nsight Compute séparées avec cache chaud, sans
+pression ajoutée. Les durées A/B/B/A sont mesurées sans compteurs. Sur 4.25, le direct par paires
+passe de 282 à 383 µs. Le F2 par paires passe de 286 à 612 µs face au direct. Le suivi instrumenté
+des phases attribue environ 28 % des cycles locaux de la tuile F2 séparée à la transformée d'entrée
+et 54 % au produit Tensor et à la transformée inverse pris ensemble. Les variantes restent au banc.
+
+Les halos redondants et les instructions hors Tensor ont consommé le gain de calcul. Les octets DDR
+ont augmenté malgré la disparition de quatre frontières. La prochaine comparaison doit faire baisser
+les instructions du F2 séparé avant d'utiliser les mêmes blocs de calcul dans une fusion longue.
+La fusion validée devra ensuite être chronométrée avec la composition du lecteur.
 
 ```sh
 python3 -I tools/rife/plafond_cuda.py \

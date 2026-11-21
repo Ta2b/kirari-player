@@ -15,8 +15,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <type_traits>
 
 #include "gpu/cuda/backend/rife_glue.cuh"
+#include "gpu/cuda/backend/rife_native_glue_relay.cuh"
 #include "gpu/cuda/backend/rife_native_plan.h"
 
 namespace kirari::gpu::cuda::rife_native {
@@ -33,9 +35,9 @@ __device__ __forceinline__ std::uint32_t half_bits(float lo, float hi) {
 
 // Les 16 canaux de la tranche Half de X en un point pleine résolution (x, y) : tranche 0, warps, instant,
 // masque ; tranche 1, attributs, flot × 1/d, zéros de rembourrage. fl : le flot accumulé au point.
-template <int K, int Half, bool Reuse, bool Packed, bool Fixed = false>
-__device__ __forceinline__ void glue_point(const FusedGlueParams& g, const warp::Staged (&src)[K], int x,
-                                           int y, float flow_scale, float (&v)[16], float (&fl)[4],
+template <int K, int Half, bool Reuse, bool Packed, bool Fixed = false, class Relay = warp::Staged>
+__device__ __forceinline__ void glue_point(const FusedGlueParams& g, const Relay (&src)[K], int x, int y,
+                                           float flow_scale, float (&v)[16], float (&fl)[4],
                                            const __half* cached = nullptr) {
   warp::Axis ax{};
   warp::Axis ay{};
@@ -47,7 +49,7 @@ __device__ __forceinline__ void glue_point(const FusedGlueParams& g, const warp:
 #pragma unroll
     for (int k = 0; k < 4; ++k) fl[k] = cached != nullptr ? __half2float(cached[k]) : 0.F;
   } else {
-    glue::flow_at<K, Fixed>(g, src, x, y, fl, ax, ay);
+    relay::flow_sample<K, Fixed>(g, src, x, y, fl, ax, ay);
   }
   if constexpr (Half == 0) {
     float w[28];
@@ -55,10 +57,9 @@ __device__ __forceinline__ void glue_point(const FusedGlueParams& g, const warp:
 #pragma unroll
     for (int c = 0; c < 14; ++c) v[c] = w[c];
     v[14] = glue::instant(g);
-    v[15] = glue::z_enlarge(src[K - 1], 4, ax, ay);
+    v[15] = relay::relay_mask(src[K - 1], ax, ay);
   } else {
-#pragma unroll
-    for (int k = 0; k < 8; ++k) v[k] = glue::z_enlarge(src[K - 1], 5 + k, ax, ay);
+    relay::relay_attributes(src[K - 1], ax, ay, v);
 #pragma unroll
     for (int k = 0; k < 4; ++k) v[8 + k] = warp::rounded(fl[k] * flow_scale);
 #pragma unroll
@@ -117,9 +118,10 @@ __device__ __forceinline__ void glue_half_resolution(__half* slot, const FusedGl
 // flot des pixels propres de la tuile dans g.x : tous sauf ceux de la première ligne
 // et de la première colonne, propres aux tuiles voisines. D = 2 : la moyenne des points (2x + tx, 2y + ty),
 // sommés dans l'ordre de warp::sum_quad (fused_glue) : ((00 + 10) + (01 + 11)) / 4.
-template <int K, int D, int Half, bool Reuse, bool Packed, class Geo = G, bool Fixed = false>
-__device__ __forceinline__ void glue_half(__half* s, const FusedGlueParams& g, const warp::Staged (&src)[K],
-                                          int y0, int x0) {
+template <int K, int D, int Half, bool Reuse, bool Packed, class Geo = G, bool Fixed = false,
+          class Relay = warp::Staged>
+__device__ __forceinline__ void glue_half(__half* s, const FusedGlueParams& g, const Relay (&src)[K], int y0,
+                                          int x0) {
   static_assert(D == 1 || D == 2, "pleine résolution ou moitié");
   static_assert(!Reuse || K > 1);
   const int xh = D == 1 ? g.height : g.out_height, xw = D == 1 ? g.width : g.out_width;
@@ -304,9 +306,11 @@ __device__ __forceinline__ void d2_attributes(__half* s, const FusedGlueParams& 
 }
 
 // La couche : 32 canaux d'entrée (28 de X et 4 nuls) vers CT sorties, en une tuile (blockIdx.z = 0).
-template <int K, int D, int CT, Acc A, bool Reuse, bool Packed, bool D2Taps = false, bool FixedD1 = false>
+template <int K, int D, int CT, Acc A, bool Reuse, bool Packed, bool D2Taps = false, bool FixedD1 = false,
+          bool CrdRelay = false>
 __global__ void __launch_bounds__(kThreads, 2) glue_conv_kernel(Params p, FusedGlueParams g) {
   static_assert(!FixedD1 || D == 1);
+  static_assert(!CrdRelay || FixedD1);
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 890
   constexpr bool kTaps = D2Taps;
 #else
@@ -319,7 +323,7 @@ __global__ void __launch_bounds__(kThreads, 2) glue_conv_kernel(Params p, FusedG
   const int y0 = 2 * ty0 - 1, x0 = 2 * tx0 - 1;
 
   // Le relèvement, après la tuile : la région de chaque Y que lisent les pixels de la tuile dans l'image.
-  warp::Staged src[K];  // NOLINT(modernize-avoid-c-arrays)
+  std::conditional_t<CrdRelay, relay::RelayCrd, warp::Staged> src[K];
   if constexpr (FixedD1) {
     g.height = g.out_height = kDirectD1Height;
     g.width = g.out_width = kDirectD1Width;
@@ -340,7 +344,10 @@ __global__ void __launch_bounds__(kThreads, 2) glue_conv_kernel(Params p, FusedG
   for (int j = 0; j < K; ++j) {
     int scale = g.source[j].scale;
     if constexpr (FixedD1) scale = glue::last_scales<K>(j);
-    src[j] = glue::stage_source(g.source[j], j == K - 1, px, py, relay, FixedD1 ? scale : 0);
+    if constexpr (CrdRelay)
+      src[j] = relay::stage_relay_crd(g.source[j], j == K - 1, px, py, relay, scale);
+    else
+      src[j] = glue::stage_source(g.source[j], j == K - 1, px, py, relay, FixedD1 ? scale : 0);
     relay += (j == K - 1 ? glue::kLastStride : glue::kFlowStride) * glue_capacity(scale, D);
   }
   __syncthreads();
@@ -584,7 +591,7 @@ bool match_d1_sources(const FusedGlueParams& g) {
 template <int K>
 void d1_direct_one(dim3 grid, int smem, cudaStream_t stream, const Params& p, const FusedGlueParams& g) {
   if (match_d1_sources<K>(g)) {
-    glue_conv_kernel<K, 1, 16, Acc::kF32, true, true, false, true>
+    glue_conv_kernel<K, 1, 16, Acc::kF32, true, true, false, true, true>
         <<<grid, kThreads, static_cast<std::size_t>(smem), stream>>>(p, g);
   } else {
     glue_one<K, 1, 16, Acc::kF32>(grid, smem, stream, p, g);
