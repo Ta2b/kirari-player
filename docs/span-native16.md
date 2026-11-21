@@ -475,20 +475,21 @@ la borne. Les ratios de ce tableau portent sur le réseau en calcul dense.
 
 Le [calculateur](../tools/bench/span_native/plafonds.py) peut compter un bloc complet
 comme un étage. Il garde ses résultats C1 et C2 et le résiduel sur puce et fusionne
-la dernière porte avec la concaténation. Il compte les transformées en plus des
-MMA FP16. Le trafic logique passe au L2 à 2,748 To/s, dont une fraction passe
+la dernière porte avec la concaténation. Chaque étage prend le maximum des
+temps Tensor FP16, transformées, L2 et DDR, avec un recouvrement idéal entre
+les tuiles. Le trafic logique passe au L2 à 2,748 To/s, dont une fraction passe
 aussi en DDR à 504 Go/s. Le calcul ne compte aucune réévaluation des halos.
 
 | SPAN FP16 1080p→4K | Durée CUDA dense actuelle | Borne F(2×2) et fusion, DDR 25 % | Part modélisée atteinte | Temps à 90 % |
 | --- | ---: | ---: | ---: | ---: |
-| Balanced | 8,171 ms | 3,662 ms | 44,8 % | 4,068 ms |
-| Balanced Sharp1 | 8,101 ms | 3,662 ms | 45,2 % | 4,068 ms |
-| Performance | 4,062 ms | 1,470 ms | 36,2 % | 1,633 ms |
-| Performance Sharp1 | 4,676 ms | 1,470 ms | 31,4 % | 1,633 ms |
+| Balanced | 8,171 ms | 3,105 ms | 38,0 % | 3,450 ms |
+| Balanced Sharp1 | 8,101 ms | 3,105 ms | 38,3 % | 3,450 ms |
+| Performance | 4,062 ms | 1,209 ms | 29,8 % | 1,344 ms |
+| Performance Sharp1 | 4,676 ms | 1,209 ms | 25,9 % | 1,344 ms |
 
-À 100 % DDR, la borne F(2×2) monte à 3,948 ms pour Balanced et 1,800 ms
-pour Performance. Le scénario F(4×4) avec 25 % DDR descend à 3,093 ms et
-1,334 ms. Ces variantes supposent que la précision reste suffisante sur chaque
+À 100 % DDR, la borne F(2×2) monte à 3,461 ms pour Balanced et 1,607 ms
+pour Performance. Le scénario F(4×4) avec 25 % DDR descend à 1,991 ms et
+0,817 ms. Ces variantes supposent que la précision reste suffisante sur chaque
 3×3. La voie Performance Sharp1 actuelle garde cinq C2 en direct pour cette raison.
 Les durées CUDA viennent des captures denses ci-dessus. Les mesures de présentation
 Wayland incluent le compositeur et figurent dans le tableau dédié.

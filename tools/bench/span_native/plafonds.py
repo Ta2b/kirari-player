@@ -106,7 +106,13 @@ def calculate(c, count, h, w, form, fused_tail, *, ddr_fraction=1., fused_body=F
         body.append(cat)
     stages = [first, *body, pixel]
     compute = sum(m / PEAK_MMA for m, _, _ in stages)
-    estimated = sum(max(m / PEAK_MMA + f / PEAK_FP32, b * ddr_fraction / DRAM, b / L2) for m, f, b in stages)
+    def stage_time(stage):
+        mma, transform, moved = stage
+        tensor, scalar = mma / PEAK_MMA, transform / PEAK_FP32
+        math = max(tensor, scalar) if fused_body else tensor + scalar
+        return max(math, moved * ddr_fraction / DRAM, moved / L2)
+
+    estimated = sum(map(stage_time, stages))
     return 1000 * compute, 1000 * estimated
 
 
