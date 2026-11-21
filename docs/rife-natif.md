@@ -187,6 +187,14 @@ Un autre ABBA combine RIFE 4.25 ×8 et SPAN Balanced 1080p vers 4K avec et sans
 passage. La médiane de la plage warp et mélange reste à 1,36 ms et son p95 passe de
 2,27 à 2,30 ms quand le flot bénéficie de la réserve L2. Le réglage reste expérimental.
 
+Un banc hors lecture regroupe les trois codes FP16 d'un pixel source dans un mot de 64 bits.
+Les adresses des seize prises de Catmull-Rom, les FMA FP32 et la borne min/max sont identiques.
+À quatre instants du ×8, la sortie 4K donne les mêmes 33 177 600 codes par instant vers le ring
+et 24 883 200 vers un tenseur planaire. Un recadrage impair confirme les deux cibles. Vers le ring,
+sept warps prennent 7,006 ms en médiane en plans et 4,719 ms avec les sources groupées. Ranger
+les deux sources coûte 0,595 ms et laisse environ 0,211 ms par créneau du ×8. Le périmètre de ce
+banc exclut la composition et l'attente de présentation.
+
 Le relevage CRD 4×4 de D2 et la projection finale à phases appariées réduisent les lectures
 et gardent les mêmes codes sur deux modèles et des recadrages. Leurs temps 1080p augmentent
 toutefois de quelques microsecondes au banc. L'écriture CRD directe garde la parité et gagne

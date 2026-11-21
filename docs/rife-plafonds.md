@@ -158,18 +158,20 @@ du warp et des accès concurrents. Une passe à froid peut en plus inclure la pr
 écritures des sommes réemployées. Une mesure des octets L2/DDR permettrait de chiffrer le coût résiduel de chaque
 frontière et le gain d'une fusion supplémentaire.
 
-### Compteurs sur un graphe RIFE à chaud
+### Compteurs sur un graphe d'interpolation à chaud
 
 Une capture Nsight Compute encadre le rejeu d'un seul graphe du lecteur à 1920 × 1088
 avec les encodages réemployés. Le validateur rapproche son identifiant de celui de
-la ligne des compteurs et vérifie que le graphe contient plusieurs noyaux. La durée
-profilée exclut le warp et mélange qui suit le moteur. Les débits de comparaison sont
+la ligne des compteurs et vérifie que le graphe contient plusieurs noyaux. Pour RIFE, la durée
+exclut le warp et mélange pleine résolution qui suit le moteur. Pour DistilDRBA, le graphe
+inclut le warp interne du modèle et le bloc final natif avec réemploi. Les débits de comparaison sont
 504 Go/s en DDR et 2,748 To/s en L2 sur la RTX 4070 Ti.
 
 | Moteur | DDR lue + écrite | Trafic L2 | Durée profilée | Borne du trafic réalisé |
 | --- | ---: | ---: | ---: | ---: |
 | RIFE 4.25 | 375,81 Mo | 2 303,62 Mo | 2,577 ms | 0,838 ms |
 | RIFE 4.22 Lite | 358,92 Mo | 2 244,00 Mo | 1,918 ms | 0,817 ms |
+| DistilDRBA v2 Lite | 120,37 Mo | 737,08 Mo | 0,795 ms | 0,268 ms |
 
 La borne prend le plus grand des deux temps estimés avec les octets mesurés. Elle
 porte sur le trafic de ces graphes et exclut la composition. Il faut mesurer les

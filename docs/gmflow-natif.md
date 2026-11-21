@@ -224,6 +224,15 @@ donne 35,63–37,65 i/s confirmées et le candidat 36,90–40,32. Les médianes 
 d'interpolation se recouvrent à 13,59–13,68 ms. Le p95 passe de 19,27–19,29 à
 19,23–21,37 ms. L'épilogue reste au banc en attendant un gain composé répétable.
 
+Préparer l'entrée de MetricNet directement en NHWC évite une conversion et 30,97 Mo de
+trafic logique par paire à 960×576. Les 8 847 360 codes comparés et les zéros de remplissage
+restent identiques. Sur les passages stabilisés du microbanc, la préparation passe de
+69,7–70,5 à 40,0–40,5 µs. En lecture composée avec la source à 48 i/s en ×2, la paire
+native réemployée passe de 10,61 à 10,53 ms. Le p95 de l'interpolation passe de 18,92
+à 21,24 ms. Wayland confirme 39,19 puis 34,74 i/s sur deux segments courts. Le réglage
+choisit des noyaux et une composition de queue différents pour GridNet entre les passages.
+Le candidat reste au banc.
+
 ```sh
 python3 tools/gmfss/gmflow_natif_couts.py --width 1920 --height 1152 --scale 0.5 \
   --plancher --reprise --winograd --rapide

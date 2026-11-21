@@ -559,6 +559,19 @@ bandes de 128 lignes, les minima des deux passages passent de 7,842–7,950 ms �
 8,188–8,283 ms. Les 24 883 200 sorties sont finies. Face au F2 du même banc, l'image
 est à 69,94 dB avec un écart maximal de 0,0131 sur [0, 1]. Le cas C64 conserve F2.
 
+La mise en graphe de la queue seule, entre attente du slot et signal de disponibilité, ne
+change pas son p95 GPU de 0,51 ms. Dans un ABBA avec le Balanced dense, Wayland confirme
+97,79 et 97,82 i/s avec la queue séparée, contre 97,75 et 90,93 i/s avec le graphe.
+Les durées du corps augmentent au second passage du graphe. Les deux passages rejouent
+1 145 queues au total. Le lecteur conserve le lancement séparé sur la file CUDA.
+
+En plein écran HDR avec RIFE 4.25 ×8 et les éclats guidés, l'essai `--span-b-ahead`
+enfile le calcul de la source B avant l'attente du premier slot. Il avance 180 à 181
+sources par passage, avec environ 5,3 ms d'avance hôte moyenne avant la soumission de
+l'écriture. Sur 8,27 s de présentations datées, Wayland confirme 140,67 et 141,20 i/s
+avec l'avance, contre 135,12 et 140,74 sans. L'écart du premier tour ne se retrouve
+pas au second et le p95 des intervalles reste variable. Le réglage reste un essai CLI.
+
 ## Mesurer
 
 Le PC ne mesure que les temps ; la justesse se juge sur processeur, dans le cloud. Un seul banc, sur CachyOS,

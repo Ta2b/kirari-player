@@ -1,5 +1,9 @@
 # Bilan : RIFE natif et DistilDRBA (19 novembre 2026)
 
+Ce bilan conserve les mesures du 19 novembre. Le lecteur actuel peut aussi exécuter le dernier bloc
+[DistilDRBA en CUDA natif](drba-natif.md). Les [compteurs des graphes CUDA](rife-plafonds.md#compteurs-sur-un-graphe-dinterpolation-à-chaud)
+complètent les estimations d'origine.
+
 Mis à jour le 19 novembre 2026 à 19 h 40 : séance PC sur e05a3a5 dépouillée (partie 0) ; Tatoub la valide, #961
 se fusionne dès que ci.yml est vert (Windows MSVC en tests), le natif passe par défaut avec le verdict gardé
 (PR qui suit), puis le peaufinage : porte du lite, blocs grossiers, glue_conv, warp_blend.

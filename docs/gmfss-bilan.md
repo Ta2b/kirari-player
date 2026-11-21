@@ -180,6 +180,14 @@ recadencée à 48 i/s, un passage dépasse le pic d'erreur RGB autorisé et gard
 Le passage qui retient Winograd confirme 35,74 i/s, dans la plage des témoins denses de
 34,63 à 36,06 i/s. Cette variante reste au banc.
 
+Une variante écrit la sortie C192 du FeatureNet directement en NHWC. Les splats la lisent
+ainsi et conservent leur disposition de sortie habituelle. La variante reproduit les 405 504 codes testés
+dans chacun des vingt cas du microbanc. Sur une source à 48 i/s avec interpolation ×2,
+Wayland confirme 38,45 i/s au témoin et 38,86 i/s au candidat. La médiane de la paire native
+avec reprise passe de 10,57 à 10,39 ms, son p95 de 11,66 à 11,79 ms. Le p95 du moteur
+d'interpolation complet passe de 18,54 à 19,09 ms. Cet A/B ne démontre pas un gain composé
+reproductible. La variante reste au banc.
+
 ### Projections directes dans GridNet
 
 L'option « Projections GMFSS directes (essai) » dans Interpolation > Avancé, ou
