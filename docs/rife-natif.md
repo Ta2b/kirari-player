@@ -182,6 +182,11 @@ avec des médianes de 2,112–2,142 et 2,109–2,124 ms. Pour 4.22 Lite, les mé
 mais les deux essais du lecteur avec C32 et C64 ensemble ralentissaient Lite de 0,032 et
 0,037 ms en médiane. Le C64 garde donc sa forme précédente.
 
+Un autre ABBA combine RIFE 4.25 ×8 et SPAN Balanced 1080p vers 4K avec et sans
+`--warp-l2`. Wayland confirme environ 1 188 images neuves à 165,00 i/s à chaque
+passage. La médiane de la plage warp et mélange reste à 1,36 ms et son p95 passe de
+2,27 à 2,30 ms quand le flot bénéficie de la réserve L2. Le réglage reste expérimental.
+
 Le relevage CRD 4×4 de D2 et la projection finale à phases appariées réduisent les lectures
 et gardent les mêmes codes sur deux modèles et des recadrages. Leurs temps 1080p augmentent
 toutefois de quelques microsecondes au banc. L'écriture CRD directe garde la parité et gagne

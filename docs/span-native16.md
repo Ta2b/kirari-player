@@ -552,6 +552,13 @@ Le halo vertical augmente de quatre à huit rangs de tuiles. Le lecteur recalcul
 3,085–3,529 à 3,635–3,695 ms, et le p95 reste dans la même plage de 4,873–5,165 ms.
 Le F4 reste au banc.
 
+Sur Balanced FP16, la variante F4 C64 en tuiles de 16 × 8 partage les poids entre
+deux groupes de quatre lignes. Elle a ensuite été testée sur le réseau dense complet
+avec les deux ReLU de chaque bloc en F4 et les portes en F2. Sur une image 1080p en
+bandes de 128 lignes, les minima des deux passages passent de 7,842–7,950 ms à
+8,188–8,283 ms. Les 24 883 200 sorties sont finies. Face au F2 du même banc, l'image
+est à 69,94 dB avec un écart maximal de 0,0131 sur [0, 1]. Le cas C64 conserve F2.
+
 ## Mesurer
 
 Le PC ne mesure que les temps ; la justesse se juge sur processeur, dans le cloud. Un seul banc, sur CachyOS,

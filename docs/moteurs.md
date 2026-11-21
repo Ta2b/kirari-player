@@ -15,6 +15,15 @@ dans Vidéo > Général (moteur de calcul et carte graphique), et s'enregistre d
 Règle : une carte NVIDIA RTX prend TensorRT, toute autre carte prend Vulkan. Vulkan est aussi le repli de
 TensorRT quand son module ne s'ouvre pas.
 
+### Voie CUDA spécialisée sur NVIDIA
+
+Le module NVIDIA conserve ses noyaux CUDA natifs et ses graphes CUDA. L'essai d'orchestration
+par ZML/PJRT a exécuté le même Winograd F2 FP16 de SPAN Balanced sur RTX 4070 Ti. Les
+33 177 600 valeurs de sortie sont identiques bit à bit. Dans deux séries sans composition,
+le prêt du résultat GPU via PJRT ajoute de 8 à 9 µs au délai médian apparié par rapport au
+graphe CUDA natif. Recopier le résultat ajoute environ 0,32 ms par rapport au prêt. Le
+chantier de portabilité se poursuit à partir des mêmes entrées et références de sortie.
+
 ## Ce qui est retiré
 
 **MIGraphX** (ROCm sous Linux, Windows ML sous Windows) et **OpenVINO** sont retirés des sources (0.10.0) :
