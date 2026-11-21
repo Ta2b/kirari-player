@@ -255,6 +255,35 @@ Tensor et les mêmes sommes FP32. Avec une borne Tensor de 1,206 ms des
 71 noyaux, le rapport passe de **45,0 % à 46,0 %**. La comparaison des
 images et la cadence confirmée sont données dans [RIFE natif](rife-natif.md).
 
+### Cible CUDA direct après Winograd et fusion par bloc
+
+[Le calcul à partir des morceaux ONNX](../tools/rife/plafond_cuda.py) applique
+Winograd F(2 × 2, 3 × 3) aux convolutions admissibles, conserve les activations
+FP16 et les sommes FP32, et compte les vingt canaux utiles de la tête. Chaque
+bloc fusionné conserve ses frontières externes, dont l'aller-retour du flot
+HWC4 de D1. La borne additionne les étages dépendants. Dans chaque étage, elle
+prend le maximum des coûts Tensor, FP32, L2 et DDR, avec des recouvrements idéaux.
+Les coûts FP32 incluent les transformées et une estimation de la colle et de
+l'épilogue. Les octets correspondent à un passage logique dans les tampons aux
+frontières. La fidélité de tous les Winograd en FP32 reste à vérifier dans le lecteur.
+
+| Graphe avec nouvel encodage | Borne modélisée | Temps à 90 % | Progression des dernières optimisations D2 et tête |
+| --- | ---: | ---: | ---: |
+| RIFE 4.25 | 0,6077 ms | 0,6752 ms | 22,65 % → 23,17 % |
+| RIFE 4.22 Lite | 0,6288 ms | 0,6987 ms | 24,47 % → 24,86 % |
+
+À 0–25 % des octets logiques en DDR, le Tensor à 86,75 TFLOP/s domine tous
+les étages. À 100 %, la borne monte à 0,7373 ms pour 4.25 et 0,7088 ms pour
+Lite. Les pourcentages comparent les mêmes mesures GPU que la section précédente,
+avec la borne de la recette simplifiée. Les chronos s'arrêtent à la sortie du
+moteur. La cadence présentée reste celle des passages Wayland avec composition.
+[Guide des plafonds par niveau de mémoire de Nsight Compute](https://docs.nvidia.com/nsight-compute/ProfilingGuide/#roofline).
+
+```sh
+python3 -I tools/rife/plafond_cuda.py \
+  CACHE/rife_v4.25-fusion3-1088x1920-de0fb71ae50fe082 --graphe-ms 2.6830 2.6229
+```
+
 ### Gains à vérifier
 
 - Pour RIFE, le gain Tensor brut de Winograd 2D atteint 0,242 ms pour 4.25 et 0,254 ms pour Lite avec un
