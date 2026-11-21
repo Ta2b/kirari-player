@@ -145,10 +145,11 @@ Le rapprochement a été effectué avec `bilan-corrige.py` de la série.
   0,066 ms dans un scénario où son aller-retour passerait entièrement en DDR à 504 Go/s. Les quelques
   étapes grossières du moteur font encore circuler leurs `X_k` et `Y_k` globaux.
 - DistilDRBA conserve les frontières planaires `X_0` et `X_1` (16,12 Mo aller-retour pour les deux).
-  Le bloc fin travaille sur `X_2` groupé au pas 112. À chaud, la colle fusionnée avec la convolution
-  retire l'écriture de 56 canaux et leur relecture sur 64 canaux avec le remplissage (31,33 Mo
-  logiques). La colle séparée reste le repli. À froid, les 112 canaux sont écrits et relus
-  (58,49 Mo). La reprise à chaud relit au moins 6,27 Mo de sommes intermédiaires FP32.
+  Le dernier bloc natif lit 56 canaux fixes de `X_2` dans les plans. À froid, la colle écrit les
+  56 autres dans le tampon au pas 112, et la convolution les relit (29,25 Mo logiques). À chaud, la
+  colle fusionnée produit ces 56 canaux dans la tuile et reprend au moins 6,27 Mo de sommes
+  intermédiaires FP32. Si le contrôle de la fusion échoue, la colle réécrit ces canaux dans le
+  tampon. En repli sur TensorRT, le rangement complet écrit puis relit 112 canaux (58,49 Mo).
   La tête écrit `Y_2` à basse résolution (pas 24) et le warp final lit 20 canaux de cette sortie.
   Le warp lit deux sources RGB selon le flot et écrit une sortie RGB, soit un volume de référence
   de 37,60 Mo pour des lectures couvrant les deux sources une fois. Les déplacements et la localité

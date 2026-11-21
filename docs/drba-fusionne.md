@@ -129,6 +129,13 @@ tient dans six noyaux.
   donne 1,342 et 0,795 ms au p95. La trace du lecteur confirme que le
   lancement de rangement disparaît pour le bloc natif et revient avec le
   repli sur TensorRT.
+- Une variante étend la colle fusionnée à froid. Elle charge les trois
+  premières tranches K16 dans la même tuile que les tranches variables
+  et publie le même cache de sommes FP32. Elle évite aussi le tampon
+  variable de X2. Sur deux scènes et quatre réglages par scène, les
+  1 566 720 codes FP16 et les 6 684 672 octets du cache restent identiques.
+  En ABBA isolé, la colle suivie de la convolution passe de 269 à 161 µs
+  et de 137 à 94 µs avec permutation XOR. La voie reste au banc.
 - Dans le bloc 0 natif, un préchargement calcule les quatre transformées
   verticales de Winograd dans les registres avant de publier la tuile.
   Les mêmes opérandes arrivent aux MMA. Les huit états de 97 920 codes
