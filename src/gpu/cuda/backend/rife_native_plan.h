@@ -112,6 +112,8 @@ GlueLaunch pick_glue(RifeNativeSums sums, int flows, int reduce, int ct);
 GlueLaunch pick_d2_taps(std::span<const int> scales);
 // D2 en CUDA direct FP32 : plans fixes du Lite (8, 4) et du 4.25 (8, 8, 4).
 GlueLaunch pick_d2_direct32(std::span<const int> scales);
+// Ces deux découpages D1 en 1080p gardent les sommes FP32, avec les échelles et les pas connus.
+GlueLaunch pick_d1_direct32(std::span<const int> scales);
 // Ses octets de mémoire partagée, pour des sources d'échelles scales (la dernière porte 52 canaux).
 int glue_smem(std::span<const int> scales, int reduce);
 // D1 en FP16 sur Ada : la tuile étroite sépare le flot et le warp dans le même bloc CUDA.

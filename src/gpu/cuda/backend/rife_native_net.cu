@@ -264,6 +264,10 @@ class Net final : public RifeNativeNet {
     if (reduce == 2) {
       if (const auto reuse = d2_glue(layer, scales)) layer.glue = reuse;
     }
+    if (reduce == 1 && !autotune_ && ada_ && sms_ == 60 && layer.oh == 544 && layer.ow == 960 &&
+        layer.cout == 16 && layer.sums == RifeNativeSums::kF32) {
+      if (const auto fixed = rn::pick_d1_direct32(scales)) layer.glue = fixed;
+    }
     layer.glue_scales = scales;
     layer.glue_reduce = reduce;
     layer.glue_grid = dim3(static_cast<unsigned>((layer.ow + rn::kTW - 1) / rn::kTW),

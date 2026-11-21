@@ -24,6 +24,7 @@ namespace {
 
 using G = Geometry<3, 2, 1>;  // pas 2, une ligne par warp : 65 × 9 pixels d'entrée pour 32 × 4 sorties
 constexpr int kLds = 16 + 8;  // une tranche de 16 canaux
+constexpr int kDirectD1Height = 1088, kDirectD1Width = 1920;
 
 __device__ __forceinline__ std::uint32_t half_bits(float lo, float hi) {
   const __half2 pair = __floats2half2_rn(lo, hi);
@@ -46,7 +47,7 @@ __device__ __forceinline__ void glue_point(const FusedGlueParams& g, const warp:
 #pragma unroll
     for (int k = 0; k < 4; ++k) fl[k] = cached != nullptr ? __half2float(cached[k]) : 0.F;
   } else {
-    glue::flow_at<K>(g, src, x, y, fl, ax, ay);
+    glue::flow_at<K, Fixed>(g, src, x, y, fl, ax, ay);
   }
   if constexpr (Half == 0) {
     float w[28];
@@ -303,8 +304,9 @@ __device__ __forceinline__ void d2_attributes(__half* s, const FusedGlueParams& 
 }
 
 // La couche : 32 canaux d'entrée (28 de X et 4 nuls) vers CT sorties, en une tuile (blockIdx.z = 0).
-template <int K, int D, int CT, Acc A, bool Reuse, bool Packed, bool D2Taps = false>
+template <int K, int D, int CT, Acc A, bool Reuse, bool Packed, bool D2Taps = false, bool FixedD1 = false>
 __global__ void __launch_bounds__(kThreads, 2) glue_conv_kernel(Params p, FusedGlueParams g) {
+  static_assert(!FixedD1 || D == 1);
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 890
   constexpr bool kTaps = D2Taps;
 #else
@@ -318,14 +320,27 @@ __global__ void __launch_bounds__(kThreads, 2) glue_conv_kernel(Params p, FusedG
 
   // Le relèvement, après la tuile : la région de chaque Y que lisent les pixels de la tuile dans l'image.
   warp::Staged src[K];  // NOLINT(modernize-avoid-c-arrays)
+  if constexpr (FixedD1) {
+    g.height = g.out_height = kDirectD1Height;
+    g.width = g.out_width = kDirectD1Width;
+    g.x_pitch = kRifeCompactFlowPitch;
+#pragma unroll
+    for (int j = 0; j < K; ++j) {
+      auto& f = g.source[j];
+      f.width = kDirectD1Width / (2 * glue::last_scales<K>(j));
+      f.height = kDirectD1Height / (2 * glue::last_scales<K>(j));
+      f.pitch = glue::kLastStride;
+    }
+  }
   __half* relay = s + G::kIR * G::kIC * kLds;
   const int xh = D == 1 ? g.height : g.out_height, xw = D == 1 ? g.width : g.out_width;
   const warp::Span px{D * max(x0, 0), D * min(x0 + G::kIC - 1, xw - 1) + D - 1};
   const warp::Span py{D * max(y0, 0), D * min(y0 + G::kIR - 1, xh - 1) + D - 1};
 #pragma unroll
   for (int j = 0; j < K; ++j) {
-    const int scale = g.source[j].scale;
-    src[j] = glue::stage_source(g.source[j], j == K - 1, px, py, relay);
+    int scale = g.source[j].scale;
+    if constexpr (FixedD1) scale = glue::last_scales<K>(j);
+    src[j] = glue::stage_source(g.source[j], j == K - 1, px, py, relay, FixedD1 ? scale : 0);
     relay += (j == K - 1 ? glue::kLastStride : glue::kFlowStride) * glue_capacity(scale, D);
   }
   __syncthreads();
@@ -336,14 +351,14 @@ __global__ void __launch_bounds__(kThreads, 2) glue_conv_kernel(Params p, FusedG
 #pragma unroll
     for (int nt = 0; nt < CT / 8; ++nt) acc[f][nt].clear();
   // Les deux tranches, comme les deux tours de conv_kernel<16, …> : prises 0 à 8 de chacune.
-  glue_half<K, D, 0, Reuse, Packed>(s, g, src, y0, x0);
+  glue_half<K, D, 0, Reuse, Packed, G, FixedD1>(s, g, src, y0, x0);
   __syncthreads();
   accumulate<16, CT, 3, 2, 1, A>(acc, s, p.w, 0, 2, 0, 9, warp, lane);
   __syncthreads();
   if constexpr (kTaps)
     d2_attributes<K, false, G>(s, g, src, x0, y0);
   else
-    glue_half<K, D, 1, Reuse, Packed>(s, g, src, y0, x0);
+    glue_half<K, D, 1, Reuse, Packed, G, FixedD1>(s, g, src, y0, x0);
   __syncthreads();
   accumulate<16, CT, 3, 2, 1, A>(acc, s, p.w, 1, 2, 0, 9, warp, lane);
   __syncthreads();  // la tuile d'entrée n'est plus lue : la mémoire partagée reçoit la sortie
@@ -551,6 +566,31 @@ bool match_scales(std::span<const int> scales) {
   return true;
 }
 
+template <int K>
+bool match_d1_sources(const FusedGlueParams& g) {
+  if (!g.encode_hwc4 || g.x_pitch != kRifeCompactFlowPitch || g.width != kDirectD1Width ||
+      g.height != kDirectD1Height || g.out_width != g.width || g.out_height != g.height || g.flows != K)
+    return false;
+  for (int j = 0; j < K; ++j) {
+    const auto& f = g.source[j];
+    const int scale = glue::last_scales<K>(j);
+    if (f.scale != scale || f.pitch != glue::kLastStride || f.width != kDirectD1Width / (2 * scale) ||
+        f.height != kDirectD1Height / (2 * scale))
+      return false;
+  }
+  return true;
+}
+
+template <int K>
+void d1_direct_one(dim3 grid, int smem, cudaStream_t stream, const Params& p, const FusedGlueParams& g) {
+  if (match_d1_sources<K>(g)) {
+    glue_conv_kernel<K, 1, 16, Acc::kF32, true, true, false, true>
+        <<<grid, kThreads, static_cast<std::size_t>(smem), stream>>>(p, g);
+  } else {
+    glue_one<K, 1, 16, Acc::kF32>(grid, smem, stream, p, g);
+  }
+}
+
 template <Acc A>
 GlueLaunch by_flows(int flows, int reduce, int ct) {
   if (reduce == 1 && flows == 3) return by_tile<3, 1, A>(ct);
@@ -583,6 +623,12 @@ GlueLaunch pick_d2_taps(std::span<const int> scales) {
 GlueLaunch pick_d2_direct32(std::span<const int> scales) {
   if (scales.size() == 2 && match_scales<3>(scales)) return d2_taps_one<2, true, Acc::kF32>;
   if (scales.size() == 3 && match_scales<4>(scales)) return d2_taps_one<3, true, Acc::kF32>;
+  return nullptr;
+}
+
+GlueLaunch pick_d1_direct32(std::span<const int> scales) {
+  if (scales.size() == 3 && match_scales<3>(scales)) return d1_direct_one<3>;
+  if (scales.size() == 4 && match_scales<4>(scales)) return d1_direct_one<4>;
   return nullptr;
 }
 

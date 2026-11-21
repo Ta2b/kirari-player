@@ -279,6 +279,22 @@ avec la borne de la recette simplifiée. Les chronos s'arrêtent à la sortie du
 moteur. La cadence présentée reste celle des passages Wayland avec composition.
 [Guide des plafonds par niveau de mémoire de Nsight Compute](https://docs.nvidia.com/nsight-compute/ProfilingGuide/#roofline).
 
+La spécialisation de la colle D1 sur Ada 60 SM fixe les dimensions et les
+pas déjà connus en 1920 × 1088. Elle conserve les mêmes prises et sommes
+FP32. Le noyau utilise 84 registres au lieu de 128 pour 4.25 et 126 pour
+Lite. Les huit captures appariées, avec le dixième rejeu et le même
+nombre de nœuds par modèle, donnent les résultats suivants.
+
+| Modèle | Colle D1, médiane | Graphe GPU, médiane | Même borne simplifiée, avant et après |
+| --- | ---: | ---: | ---: |
+| RIFE 4.25 | 413,06 → 390,24 µs | 2,6193 → 2,6048 ms | 23,20 % → 23,33 % |
+| RIFE 4.22 Lite | 388,38 → 375,63 µs | 2,5390 → 2,5219 ms | 24,77 % → 24,93 % |
+
+Les six sorties image du lecteur sont identiques bit à bit. Avec SPAN
+Balanced et la composition Wayland, les quatre passages de 4.25 donnent
+165,00 nouvelles images/s sans abandon. Lite donne 164,76–165,00 nouvelles
+images/s, avec un abandon sur un passage de chaque variante.
+
 ```sh
 python3 -I tools/rife/plafond_cuda.py \
   CACHE/rife_v4.25-fusion3-1088x1920-de0fb71ae50fe082 --graphe-ms 2.6830 2.6229
