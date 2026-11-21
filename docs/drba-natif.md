@@ -15,6 +15,13 @@ mesurent 101,95 à 102,30 µs de médiane, rangement compris. Des passages ont a
 mesuré 0,46 à 0,71 ms. Il faut vérifier le coût en lecture et l'effet des écarts
 d'encodage sur le résultat de la chaîne entière.
 
+Le même banc groupe maintenant les trois images dans les quatre lancements de
+l'encodeur. Les 12 533 760 valeurs des deux trios sont identiques bit à bit à
+celles des trois appels séparés, avec ou sans écriture planaire dans la dernière
+convolution. Sur les passages chronométrés en alternance, la médiane baisse
+d'environ 97 à 77 µs, rangement final compris. Le changement concerne l'encodage
+à froid. Le rejeu à temps seul réutilise déjà les encodages.
+
 ## Proposition initiale du 19 novembre 2026
 
 Le plan ci-dessous visait les trois blocs et l'encodeur. Les noms, estimations et options correspondent

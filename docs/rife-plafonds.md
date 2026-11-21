@@ -216,9 +216,26 @@ aux marqueurs du lecteur.
 | RIFE 4.25 | 444,96 Mo | 2 339,78 Mo | 2,835 ms | 0,883 ms |
 | RIFE 4.22 Lite | 434,43 Mo | 2 351,63 Mo | 2,715 ms | 0,862 ms |
 
-La borne du trafic donne une limite des transferts pour ces volumes. Il reste à relever
-les opérations Tensor et le coût des synchronisations dans les mêmes graphes pour estimer
-la marge totale. Les chronos avec présentation sont donnés dans [RIFE natif](rife-natif.md).
+Un second profil mesure les opérations Tensor par nœud. Le rejeu isolé de chaque
+nœud change le trafic DDR. Les chiffres DDR du tableau restent donc ceux mesurés pour
+le graphe entier. Nsight Systems, sans compteurs matériels, donne la durée du graphe
+entre son premier et son dernier noyau. Le marqueur confirme le même état de cache et
+le même nombre de nœuds dans chaque paire de captures.
+
+| Modèle | Nœuds | Opérations FP16 à sommes FP32 | Durée GPU du graphe | Borne Tensor à 86,75 TFLOP/s | Rapport borne / durée |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| RIFE 4.25 | 71 | 104,66 GFLOP | 2,659 ms | 1,206 ms | 45,4 % |
+| RIFE 4.22 Lite | 50 | 108,28 GFLOP | 2,570 ms | 1,248 ms | 48,6 % |
+
+Le débit de 86,75 TFLOP/s est le plus haut repère soutenu renvoyé par le compteur
+FP16 à destination FP32 pour ces captures. Les sommes FP16 ont un autre débit.
+Dans ce modèle agrégé, le plancher Tensor est supérieur au plancher de trafic pour
+les deux graphes. Le rapport porte sur les opérations exécutées par le code actuel.
+Il reste à recalculer le travail après Winograd et les fusions suivantes.
+Les deux colles fines prennent 259 et 409 µs pour 4.25, et 241 et 388 µs pour Lite.
+Les huit résidus du dernier bloc prennent encore environ 302 µs sur chacun.
+[Référence Nsight Compute](https://docs.nvidia.com/nsight-compute/ProfilingGuide/#metrics-structure).
+Les chronos avec présentation sont donnés dans [RIFE natif](rife-natif.md).
 
 ### Gains à vérifier
 
